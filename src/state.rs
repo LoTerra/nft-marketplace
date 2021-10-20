@@ -1,3 +1,4 @@
+use std::ops::Add;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -13,12 +14,23 @@ pub struct State {
 
 pub const STATE: Item<State> = Item::new("state");
 
+/*
+    TODO: Allow th creation of nft_s directly from the contract
+ */
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct CharityInfo {
     pub address: CanonicalAddr,
     pub fee_percentage: u8,
 }
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct NftCreatorInfo {
+    pub token_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub image: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct ItemInfo {
     pub bet_id: u64,
@@ -30,10 +42,11 @@ pub struct ItemInfo {
     pub highest_bid: Uint128,
     pub highest_bidder: CanonicalAddr,
     pub nft_contract: CanonicalAddr,
-    pub nft_id: u64,
+    pub nft_id: String,
     pub private_sale_privilege: Option<Uint128>,
     pub total_bids: u64,
-    pub charity: Option<CharityInfo>
+    pub charity: Option<CharityInfo>,
+    pub create_nft: Option<NftCreatorInfo>
 }
 
 pub const ITEMS: Map<&[u8], ItemInfo> = Map::new("items");
