@@ -17,13 +17,14 @@ pub const STATE: Item<State> = Item::new("state");
 pub struct ItemInfo {
     pub bet_id: u64,
     pub owner: CanonicalAddr,
-    pub description: String,
     pub start_price: Uint128,
     pub reserve_price: Uint128,
     pub start_time: u64,
     pub end_time: u64,
     pub highest_bid: Uint128,
     pub highest_bidder: CanonicalAddr,
+    pub nft_contract: CanonicalAddr,
+    pub nft_id: u64,
 }
 
 pub const ITEMS: Map<&[u8], ItemInfo> = Map::new("items");
