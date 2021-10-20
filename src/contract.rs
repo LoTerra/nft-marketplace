@@ -29,6 +29,11 @@ pub fn instantiate(
         TODO: Instantiate a cw20, privilege using this cw20 like private sale...
      */
 
+    /*
+        TODO: Instantiate a cw721 for minting nft's directly from creation as option
+     */
+
+
     Ok(Response::new()
         .add_attribute("method", "instantiate")
         .add_attribute("owner", info.sender)
