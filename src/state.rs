@@ -7,22 +7,21 @@ use cw_storage_plus::{Item, Map};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct State {
-    pub count: i32,
-    pub owner: Addr,
-    pub count_bets: u64,
+    pub counter_items: u64,
+    pub cw20_address: CanonicalAddr
 }
 
 pub const STATE: Item<State> = Item::new("state");
-
-/*
-    TODO: Allow th creation of nft_s directly from the contract
- */
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct CharityInfo {
     pub address: CanonicalAddr,
     pub fee_percentage: u8,
 }
+
+/*
+    TODO: Allow th creation of nft_s directly from the contract
+ */
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct NftCreatorInfo {
     pub token_id: String,

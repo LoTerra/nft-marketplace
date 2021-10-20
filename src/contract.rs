@@ -24,16 +24,10 @@ pub fn instantiate(
     };
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
     STATE.save(deps.storage, &state)?;
-    BIDDER.save(
-        deps.storage,
-        (
-            &1_u64.to_be_bytes(),
-            deps.api
-                .addr_canonicalize(&info.sender.as_str())?
-                .as_slice(),
-        ),
-        &(0, Bidder {}),
-    )?;
+
+    /*
+        TODO: Instantiate a cw20, privilege using this cw20 like private sale...
+     */
 
     Ok(Response::new()
         .add_attribute("method", "instantiate")
