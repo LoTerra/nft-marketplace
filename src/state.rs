@@ -13,6 +13,12 @@ pub struct State {
 
 pub const STATE: Item<State> = Item::new("state");
 
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct CharityInfo {
+    pub address: CanonicalAddr,
+    pub fee_percentage: u8,
+}
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct ItemInfo {
     pub bet_id: u64,
@@ -25,6 +31,9 @@ pub struct ItemInfo {
     pub highest_bidder: CanonicalAddr,
     pub nft_contract: CanonicalAddr,
     pub nft_id: u64,
+    pub private_sale_privilege: Option<Uint128>,
+    pub total_bids: u64,
+    pub charity: Option<CharityInfo>
 }
 
 pub const ITEMS: Map<&[u8], ItemInfo> = Map::new("items");
@@ -41,6 +50,7 @@ pub struct BidInfo {
     pub bid_counter: u64,
     pub total_bid: Uint128,
     pub refunded: bool,
+    pub privilege_used: Uint128
 }
 
 pub const BIDS: Map<(&[u8], &[u8]), BidInfo> = Map::new("bids");
