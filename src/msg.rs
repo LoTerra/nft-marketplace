@@ -1,5 +1,6 @@
 use std::fmt::Binary;
 use cosmwasm_std::Coin;
+use cw721::Cw721ReceiveMsg;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -16,8 +17,19 @@ pub struct InstantiateMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecuteMsg {
-    Increment {},
-    Reset { count: i32 },
+    /// Create an nft and sell
+    CreateSell {},
+    PlaceBid{},
+    RetireBid{},
+    OwnerWithdrawNft{},
+    /// This accepts a properly-encoded ReceiveMsg from a cw721 contract
+    Receive(Cw721ReceiveMsg),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiveMsg {
+    SellNft {},
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]

@@ -30,10 +30,17 @@ pub struct NftCreatorInfo {
     pub image: Option<String>,
 }
 
+/*
+    TODO: Should we limit with spread bid like percentage max to increase the current bid
+    E.g
+    Current bid 100
+    Alice want to bid 1000 the percentage increase is 1000%
+    it's probably better to limit
+ */
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct ItemInfo {
     pub bet_id: u64,
-    pub owner: CanonicalAddr,
+    pub creator: CanonicalAddr,
     pub start_price: Uint128,
     pub reserve_price: Uint128,
     pub start_time: u64,
