@@ -8,7 +8,8 @@ use cw_storage_plus::{Item, Map};
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct State {
     pub counter_items: u64,
-    pub cw20_address: CanonicalAddr
+    pub cw20_address: CanonicalAddr,
+    pub cw721_address: CanonicalAddr,
 }
 
 pub const STATE: Item<State> = Item::new("state");
