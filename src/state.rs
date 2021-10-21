@@ -8,7 +8,8 @@ use cw_storage_plus::{Item, Map};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct Config {
-    pub denom: String
+    pub denom: String,
+    pub bid_margin: u8,
 }
 pub const CONFIG: Item<Config> = Item::new("config");
 

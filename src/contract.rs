@@ -1,3 +1,4 @@
+use core::slice::SlicePattern;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{from_binary, to_binary, Binary, CanonicalAddr, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdResult, SubMsg, Uint128, WasmMsg, Coin};
@@ -6,7 +7,7 @@ use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
 
 use crate::error::ContractError;
 use crate::msg::{CharityResponse, CountResponse, ExecuteMsg, InstantiateMsg, QueryMsg, ReceiveMsg};
-use crate::state::{CharityInfo, ItemInfo, State, BIDDER, ITEMS, STATE, CONFIG, BIDS, BidInfo};
+use crate::state::{CharityInfo, ItemInfo, State, BIDDER, ITEMS, STATE, CONFIG, BIDS, BidInfo, BidAmountTimeInfo};
 
 // version info for migration info
 const CONTRACT_NAME: &str = "crates.io:marketplace";
@@ -23,6 +24,7 @@ pub fn instantiate(
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
     config.denom = msg.denom;
+    config.bid_margin = msg.bid_margin;
     CONFIG.save(deps.storage, &config)?;
 
     /*
@@ -65,9 +67,9 @@ pub fn execute(
 ) -> Result<Response, ContractError> {
     match msg {
         ExecuteMsg::InstantBuy {auction_id} => execute_instant_buy(deps, env, info, auction_id),
-        ExecuteMsg::WithdrawNft {} => execute_withdraw_nft(deps, env, info),
-        ExecuteMsg::PlaceBid {} => execute_place_bid(deps, env, info),
-        ExecuteMsg::RetireBids {} => execute_retire_bids(deps, env, info),
+        ExecuteMsg::WithdrawNft {auction_id} => execute_withdraw_nft(deps, env, info),
+        ExecuteMsg::PlaceBid {auction_id} => execute_place_bid(deps, env, info),
+        ExecuteMsg::RetireBids {auction_id} => execute_retire_bids(deps, env, info),
         ExecuteMsg::ReceiveCw721(msg) => execute_receive_cw721(deps, env, info, msg),
         ExecuteMsg::ReceiveCw20(msg) => execute_receive_cw20(deps, env, info, msg),
     }
@@ -201,7 +203,102 @@ pub fn execute_create_auction(
         .add_attribute("token_id", token_id)
         .add_attribute("contract_minter", info.sender)
         .add_attribute("creator", sender)
-        .add_attribute("new_temporal_owner", env.contract.address);
+        .add_attribute("new_temporal_owner", env.contract.address)
+        .add_attribute("auction_id", state.counter_items);
+    Ok(res)
+}
+
+pub fn execute_retire_bids(deps: DepsMut, env: Env, info: MessageInfo, auction_id: u64)-> Result<Response, ContractError>{
+
+
+
+    Ok(Response::default())
+}
+
+pub fn execute_place_bid(deps: DepsMut, env: Env, info: MessageInfo, auction_id: u64)-> Result<Response, ContractError>{
+    let config = CONFIG.load(deps.storage)?;
+    let sender_raw = deps.api.addr_canonicalize(&info.sender.as_str())?;
+    let sent = match info.funds.len() {
+        0 => Err(ContractError::EmptyFunds {}),
+        1 => {
+            if info.funds[0].denom != config.denom {
+                return Err(ContractError::WrongDenom {});
+            }
+            Ok(info.funds[0].amount)
+        }
+        _ => Err(ContractError::MultipleDenoms {}),
+    }?;
+
+    let item = match ITEMS.may_load(deps.storage, &auction_id.to_be_bytes())? {
+        None => Err(ContractError::Unauthorized {}),
+        Some(item) => Ok(item)
+    }?;
+
+    let bid = match item.private_sale_privilege {
+        None => None,
+        Some(amount_required) => {
+            let bid = match BIDS.may_load(deps.storage, (&auction_id.to_be_bytes(), &sender_raw.as_slice()))?{
+                None => Err(ContractError::PrivateSaleRestriction (amount_required)),
+                Some(bid) => {
+                    if amount_required != bid.privilege_used {
+                        ContractError::PrivateSaleRestriction (amount_required)
+                    }
+                    Ok(bid)
+                }
+            }?;
+            Some(bid)
+        }
+    };
+
+    let bid_margin = item.highest_bid.multiply_ratio(config.bid_margin, 100);
+    let min_bid = item.highest_bid.checked_add(bid_margin)?;
+    if sent < min_bid {
+        return Err(ContractError::MinBid(min_bid))
+    }
+
+    ITEMS.update(
+        deps.storage,
+        &auction_id.to_be_bytes(),
+        |item| -> StdResult<_> {
+            let mut updated_item = item?;
+            updated_item.highest_bid = sent;
+            updated_item.highest_bidder = sender_raw;
+            updated_item.total_bids += 1;
+
+            Ok(updated_item)
+        },
+    )?;
+
+    match bid {
+        None => {
+            BIDS.save(deps.storage, (&auction_id.to_be_bytes(), &sender_raw.as_slice()), &BidInfo{
+                bids: vec![BidAmountTimeInfo{ amount: sent, time: env.block.time.seconds() }],
+                bid_counter: 1,
+                total_bid: sent,
+                refunded: false,
+                privilege_used: None
+            })
+        }
+        Some(_) => {
+            BIDS.update(
+                deps.storage,
+                (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+                |bid| -> StdResult<_> {
+                    let mut updated_bid = bid?;
+                    updated_bid.bid_counter += 1;
+                    updated_bid.total_bid = updated_bid.total_bid.checked_add(sent)?;
+                    updated_bid.bids.push(BidAmountTimeInfo{ amount: sent, time: env.block.time.seconds() });
+
+                    Ok(updated_bid)
+                },
+            )?;
+        }
+    }
+
+    let res = Response::new()
+        .add_attribute("new_bid", sent)
+        .add_attribute("sender", info.sender.to_string())
+        .add_attribute("auction_id", auction_id);
     Ok(res)
 }
 
