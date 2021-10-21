@@ -15,20 +15,20 @@ pub struct InstantiateMsg {
     pub cw721_code_id: u64,
     pub cw721_msg: Binary,
     pub cw721_label: String,
-    pub bid_margin: u8
+    pub bid_margin: u8,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecuteMsg {
     /// Place your bid
-    PlaceBid {auction_id: u64},
+    PlaceBid { auction_id: u64 },
     /// Retire all your bids
-    RetireBids {auction_id: u64},
+    RetireBids { auction_id: u64 },
     /// Owner can withdraw the NFT at the end of the sale
-    WithdrawNft {auction_id: u64},
+    WithdrawNft { auction_id: u64 },
     /// Instant buy if allowed on the sale
-    InstantBuy { auction_id: u64},
+    InstantBuy { auction_id: u64 },
     /// This accepts a properly-encoded ReceiveMsg from a cw721 contract
     ReceiveCw721(Cw721ReceiveMsg),
     /// This accepts a properly-encoded ReceiveMsg from a cw20 contract
@@ -49,7 +49,7 @@ pub enum ReceiveMsg {
         private_sale_privilege: Option<Uint128>,
     },
     /// Register private sale
-    RegisterPrivateSale {},
+    RegisterPrivateSale { auction_id: u64 },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]

@@ -5,7 +5,6 @@ use std::ops::Add;
 use cosmwasm_std::{Addr, CanonicalAddr, Uint128};
 use cw_storage_plus::{Item, Map};
 
-
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct Config {
     pub denom: String,
@@ -26,17 +25,6 @@ pub const STATE: Item<State> = Item::new("state");
 pub struct CharityInfo {
     pub address: CanonicalAddr,
     pub fee_percentage: u8,
-}
-
-/*
-   TODO: Allow the creation of nft_s directly from the contract
-*/
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct NftCreatorInfo {
-    pub token_id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub image: Option<String>,
 }
 
 /*
@@ -62,7 +50,6 @@ pub struct ItemInfo {
     pub nft_id: String,
     pub total_bids: u64,
     pub charity: Option<CharityInfo>,
-    pub create_nft: Option<NftCreatorInfo>,
     pub instant_buy: Option<Uint128>,
     pub reserve_price: Option<Uint128>,
     pub private_sale_privilege: Option<Uint128>,
