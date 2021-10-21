@@ -38,6 +38,10 @@ pub struct NftCreatorInfo {
     Alice want to bid 1000 the percentage increase is 1000%
     it's probably better to limit
  */
+
+/*
+    TODO: Should we ask for a collateral for selling ? in order to limit spam
+ */
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct ItemInfo {
     pub bet_id: u64,

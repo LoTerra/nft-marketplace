@@ -19,8 +19,11 @@ pub struct InstantiateMsg {
 pub enum ExecuteMsg {
     /// Create an nft and sell
     CreateSell {},
+    /// Place your bid
     PlaceBid{},
-    RetireBid{},
+    /// Retire all your bids
+    RetireBids{},
+    /// Owner can withdraw the nft at the end of the sale
     OwnerWithdrawNft{},
     /// This accepts a properly-encoded ReceiveMsg from a cw721 contract
     Receive(Cw721ReceiveMsg),
@@ -29,6 +32,7 @@ pub enum ExecuteMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReceiveMsg {
+    /// Sell your nft
     SellNft {},
 }
 
