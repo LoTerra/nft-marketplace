@@ -8,6 +8,7 @@ use std::fmt::Binary;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct InstantiateMsg {
+    pub denom: String,
     pub cw20_code_id: u64,
     pub cw20_msg: Binary,
     pub cw20_label: String,
@@ -19,8 +20,6 @@ pub struct InstantiateMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecuteMsg {
-    /// Create an NFT and sell
-    CreateMintAuction {},
     /// Place your bid
     PlaceBid {},
     /// Retire all your bids

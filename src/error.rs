@@ -17,6 +17,18 @@ pub enum ContractError {
 
     #[error("Cannot be zero")]
     ZeroNotValid {},
+
+    #[error("Empty funds")]
+    EmptyFunds {},
+
+    #[error("Wrong denom")]
+    WrongDenom {},
+
+    #[error("Multiple denom not allowed")]
+    MultipleDenoms {},
+
+    #[error("Inaccurate funds for instant buying")]
+    InaccurateFunds {},
     // Add any other custom errors you like here.
     // Look at https://docs.rs/thiserror/1.0.21/thiserror/ for details.
 }

@@ -5,6 +5,13 @@ use std::ops::Add;
 use cosmwasm_std::{Addr, CanonicalAddr, Uint128};
 use cw_storage_plus::{Item, Map};
 
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct Config {
+    pub denom: String
+}
+pub const CONFIG: Item<Config> = Item::new("config");
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct State {
     pub counter_items: u64,
