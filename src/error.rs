@@ -8,6 +8,15 @@ pub enum ContractError {
 
     #[error("Unauthorized")]
     Unauthorized {},
+
+    #[error("End time already expired")]
+    EndTimeExpired {},
+
+    #[error("Percentage error")]
+    PercentageFormat {},
+
+    #[error("Cannot be zero")]
+    ZeroNotValid {},
     // Add any other custom errors you like here.
     // Look at https://docs.rs/thiserror/1.0.21/thiserror/ for details.
 }

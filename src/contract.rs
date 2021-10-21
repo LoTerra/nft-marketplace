@@ -1,11 +1,15 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult, WasmMsg, CosmosMsg, SubMsg, Reply};
+use cosmwasm_std::{
+    from_binary, to_binary, Binary, CanonicalAddr, CosmosMsg, Deps, DepsMut, Env, MessageInfo,
+    Reply, Response, StdResult, SubMsg, Uint128, WasmMsg,
+};
 use cw2::set_contract_version;
+use cw721::Cw721ReceiveMsg;
 
 use crate::error::ContractError;
-use crate::msg::{CountResponse, ExecuteMsg, InstantiateMsg, QueryMsg};
-use crate::state::{State, BIDDER, STATE};
+use crate::msg::{CharityResponse, CountResponse, ExecuteMsg, InstantiateMsg, QueryMsg, ReceiveMsg};
+use crate::state::{CharityInfo, ItemInfo, State, BIDDER, ITEMS, STATE};
 
 // version info for migration info
 const CONTRACT_NAME: &str = "crates.io:marketplace";
@@ -21,34 +25,34 @@ pub fn instantiate(
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
     /*
-        Instantiate a cw20, privilege using this cw20 like private sale...
-     */
+       Instantiate a cw20, privilege using this cw20 like private sale...
+    */
     let cw20_msg = CosmosMsg::Wasm(WasmMsg::Instantiate {
         admin: Some(env.contract.address.to_string()),
         code_id: msg.cw20_code_id,
         msg: msg.cw20_msg,
         funds: vec![],
-        label: msg.cw20_label
+        label: msg.cw20_label,
     });
 
     /*
-        Instantiate a cw721 for minting nft's directly from creation as option
-     */
+       Instantiate a cw721 for minting nft's directly from creation as option
+    */
     let cw721_msg = CosmosMsg::Wasm(WasmMsg::Instantiate {
         admin: Some(env.contract.address.to_string()),
         code_id: msg.cw721_code_id,
         msg: msg.cw721_msg,
         funds: vec![],
-        label: msg.cw721_label
+        label: msg.cw721_label,
     });
 
     let cw20_sub_msg = SubMsg::reply_on_success(cw20_msg, 0);
     let cw721_sub_msg = SubMsg::reply_on_success(cw721_msg, 1);
     Ok(Response::new()
-           .add_submessage(cw20_sub_msg)
-           .add_submessage(cw721_sub_msg)
-           .add_attribute("method", "instantiate")
-           .add_attribute("owner", info.sender))
+        .add_submessage(cw20_sub_msg)
+        .add_submessage(cw721_sub_msg)
+        .add_attribute("method", "instantiate")
+        .add_attribute("owner", info.sender))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -59,28 +63,189 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::Increment {} => try_increment(deps),
-        ExecuteMsg::Reset { count } => try_reset(deps, info, count),
+        ExecuteMsg::InstantBuy {auction_id} => execute_instant_buy(deps, env, info, auction_id),
+        ExecuteMsg::CreateMintAuction {} => execute_sell(deps, env, info),
+        ExecuteMsg::WithdrawNft {} => execute_withdraw_nft(deps, env, info),
+        ExecuteMsg::PlaceBid {} => execute_place_bid(deps, env, info),
+        ExecuteMsg::RetireBids {} => execute_retire_bids(deps, env, info),
+        ExecuteMsg::ReceiveCw721(msg) => execute_receive_cw721(deps, env, info, msg),
+        ExecuteMsg::ReceiveCw20(msg) => execute_receive_cw20(deps, env, info, msg),
     }
 }
 
-pub fn try_increment(deps: DepsMut) -> Result<Response, ContractError> {
-    STATE.update(deps.storage, |mut state| -> Result<_, ContractError> {
-        state.count += 1;
-        Ok(state)
-    })?;
+pub fn execute_receive_cw721(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    wrapper: Cw721ReceiveMsg,
+) -> Result<Response, ContractError> {
+    // let state = STATE.load(deps.storage)?;
 
-    Ok(Response::new().add_attribute("method", "try_increment"))
+    // All cw721 can send nft and trigger this receive msg
+    /*if info.sender != deps.api.addr_humanize(&state.cw721_address)? {
+        return Err(ContractError::Unauthorized {});
+    }*/
+
+    let msg: ReceiveMsg = from_binary(&wrapper.msg)?;
+    match msg {
+        ReceiveMsg::CreateAuctionNft {
+            start_price,
+            start_time,
+            end_time,
+            charity,
+            instant_buy,
+            reserve_price,
+            private_sale_privilege,
+        } => execute_create_auction(
+            deps,
+            env,
+            info,
+            wrapper.sender,
+            wrapper.token_id,
+            start_price,
+            start_time,
+            end_time,
+            charity,
+            instant_buy,
+            reserve_price,
+            private_sale_privilege,
+        ),
+        _ => Err(ContractError::Unauthorized {}),
+    }
+    Ok(Response::default())
 }
-pub fn try_reset(deps: DepsMut, info: MessageInfo, count: i32) -> Result<Response, ContractError> {
-    STATE.update(deps.storage, |mut state| -> Result<_, ContractError> {
-        if info.sender != state.owner {
-            return Err(ContractError::Unauthorized {});
+
+pub fn execute_create_auction(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    sender: String,
+    token_id: String,
+    start_price: Option<Uint128>,
+    start_time: Option<u64>,
+    end_time: u64,
+    charity: Option<CharityResponse>,
+    instant_buy: Option<Uint128>,
+    reserve_price: Option<Uint128>,
+    private_sale_privilege: Option<Uint128>,
+) -> Result<Response, ContractError> {
+    let mut state = STATE.load(deps.storage)?;
+    state.counter_items += 1;
+    STATE.save(deps.storage, &state)?;
+
+    let sender_raw = deps.api.addr_canonicalize(sender.as_ref())?;
+    let contract_raw = deps.api.addr_canonicalize(info.sender.as_ref())?;
+
+    if env.block.time.seconds() > end_time {
+        return Err(ContractError::EndTimeExpired {})
+    }
+
+    // Validate charity data
+    let valid_charity = match charity {
+        None => None,
+        Some(info) => {
+            if info.fee_percentage < 0 ||  info.fee_percentage > 100{
+                return Err(ContractError::PercentageFormat {})
+            }
+            let addr_validate = deps.api.addr_validate(info.address.as_str())?;
+            let addr_raw = deps.api.addr_canonicalize(addr_validate.as_str())?;
+            Some(CharityInfo{ address: addr_raw, fee_percentage: info.fee_percentage })
         }
-        state.count = count;
-        Ok(state)
-    })?;
-    Ok(Response::new().add_attribute("method", "reset"))
+    };
+
+    // Validate instant buy
+    let instant_buy_price = match instant_buy {
+        None => None,
+        Some(price) => {
+            if price.is_zero() {
+                return Err(ContractError::ZeroNotValid {})
+            }
+            Some(price)
+        }
+    };
+
+    // Validate private price
+    let private_sale_price = match private_sale_privilege {
+        None => None,
+        Some(price) => {
+            if price.is_zero() {
+                return Err(ContractError::ZeroNotValid {})
+            }
+            Some(price)
+        }
+    };
+
+    ITEMS.save(
+        deps.storage,
+        &state.counter_items.to_be_bytes(),
+        &ItemInfo {
+            creator: sender_raw,
+            start_price: Some(start_price.unwrap_or_default()),
+            start_time: Some(start_time?),
+            end_time,
+            highest_bid: Uint128::zero(),
+            highest_bidder: Default::default(),
+            nft_contract: contract_raw,
+            nft_id: token_id.clone(),
+            total_bids: 0,
+            charity: valid_charity,
+            create_nft: None,
+            instant_buy: instant_buy_price,
+            reserve_price: Some(reserve_price?),
+            private_sale_privilege: private_sale_price,
+        },
+    )?;
+
+    let res = Response::new()
+        .add_attribute("create_auction_type", "NFT")
+        .add_attribute("token_id", token_id)
+        .add_attribute("contract_minter", info.sender)
+        .add_attribute("creator", sender)
+        .add_attribute("new_temporal_owner", env.contract.address);
+    Ok(res)
+}
+
+pub fn execute_instant_buy(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    auction_id: u64
+) -> Result<Response, ContractError> {
+    let mut state = STATE.load(deps.storage)?;
+    state.counter_items += 1;
+    STATE.save(deps.storage, &state)?;
+
+    let sender_raw = deps.api.addr_canonicalize(sender.as_ref())?;
+    let contract_raw = deps.api.addr_canonicalize(info.sender.as_ref())?;
+
+    ITEMS.save(
+        deps.storage,
+        &state.counter_items.to_be_bytes(),
+        &ItemInfo {
+            creator: sender_raw,
+            start_price: Some(start_price.unwrap_or_default()),
+            start_time: Some(start_time?),
+            end_time,
+            highest_bid: Uint128::zero(),
+            highest_bidder: Default::default(),
+            nft_contract: contract_raw,
+            nft_id: token_id.clone(),
+            total_bids: 0,
+            charity: Some(charity?),
+            create_nft: None,
+            instant_buy: Some(instant_buy?),
+            reserve_price: Some(reserve_price?),
+            private_sale_privilege: Some(private_sale_privilege?),
+        },
+    )?;
+
+    let res = Response::new()
+        .add_attribute("create_auction_type", "NFT")
+        .add_attribute("token_id", token_id)
+        .add_attribute("contract_minter", info.sender)
+        .add_attribute("creator", sender)
+        .add_attribute("new_temporal_owner", env.contract.address);
+    Ok(res)
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
