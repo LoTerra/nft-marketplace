@@ -1,6 +1,6 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+use cosmwasm_std::{to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult, WasmMsg, CosmosMsg, SubMsg, Reply};
 use cw2::set_contract_version;
 
 use crate::error::ContractError;
@@ -14,30 +14,39 @@ const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
-    let state = State {
-        count: msg.count,
-        owner: info.sender.clone(),
-    };
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-    STATE.save(deps.storage, &state)?;
 
     /*
-        TODO: Instantiate a cw20, privilege using this cw20 like private sale...
+        Instantiate a cw20, privilege using this cw20 like private sale...
      */
+    let cw20_msg = CosmosMsg::Wasm(WasmMsg::Instantiate {
+        admin: Some(env.contract.address.to_string()),
+        code_id: msg.cw20_code_id,
+        msg: msg.cw20_msg,
+        funds: vec![],
+        label: msg.cw20_label
+    });
 
     /*
-        TODO: Instantiate a cw721 for minting nft's directly from creation as option
+        Instantiate a cw721 for minting nft's directly from creation as option
      */
+    let cw721_msg = CosmosMsg::Wasm(WasmMsg::Instantiate {
+        admin: Some(env.contract.address.to_string()),
+        code_id: msg.cw721_code_id,
+        msg: msg.cw721_msg,
+        funds: vec![],
+        label: msg.cw721_label
+    });
 
-
-    Ok(Response::new()
+    let cw20_sub_msg = SubMsg::reply_on_success(cw20_msg, 0);
+    let cw721_sub_msg = SubMsg::reply_on_success(cw721_msg, 1);
+    Ok(Response::new().add_submessage(cw20_sub_msg).add_submessage(cw721_sub_msg)
         .add_attribute("method", "instantiate")
         .add_attribute("owner", info.sender)
-        .add_attribute("count", msg.count.to_string()))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -70,6 +79,15 @@ pub fn try_reset(deps: DepsMut, info: MessageInfo, count: i32) -> Result<Respons
         Ok(state)
     })?;
     Ok(Response::new().add_attribute("method", "reset"))
+}
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractError> {
+    match msg.id {
+        0 => cw20_instance_reply(deps, env, msg.result),
+        1 => cw721_instance_reply(deps, env, msg.result),
+        _ => Err(ContractError::Unauthorized {}),
+    }
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]

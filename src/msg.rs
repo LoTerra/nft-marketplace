@@ -1,9 +1,16 @@
+use std::fmt::Binary;
+use cosmwasm_std::Coin;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct InstantiateMsg {
-    pub count: i32,
+    pub cw20_code_id: u64,
+    pub cw20_msg: Binary,
+    pub cw20_label: String,
+    pub cw721_code_id: u64,
+    pub cw721_msg: Binary,
+    pub cw721_label: String
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
