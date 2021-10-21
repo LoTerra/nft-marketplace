@@ -47,18 +47,18 @@ pub struct ItemInfo {
     pub bet_id: u64,
     pub creator: CanonicalAddr,
     pub start_price: Uint128,
-    pub reserve_price: Uint128,
     pub start_time: u64,
     pub end_time: u64,
     pub highest_bid: Uint128,
     pub highest_bidder: CanonicalAddr,
     pub nft_contract: CanonicalAddr,
     pub nft_id: String,
-    pub private_sale_privilege: Option<Uint128>,
     pub total_bids: u64,
     pub charity: Option<CharityInfo>,
     pub create_nft: Option<NftCreatorInfo>,
     pub instant_buy: Option<Uint128>,
+    pub reserve_price: Option<Uint128>,
+    pub private_sale_privilege: Option<Uint128>,
 }
 
 pub const ITEMS: Map<&[u8], ItemInfo> = Map::new("items");
