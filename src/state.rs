@@ -57,7 +57,8 @@ pub struct ItemInfo {
     pub private_sale_privilege: Option<Uint128>,
     pub total_bids: u64,
     pub charity: Option<CharityInfo>,
-    pub create_nft: Option<NftCreatorInfo>
+    pub create_nft: Option<NftCreatorInfo>,
+    pub instant_buy: Option<Uint128>,
 }
 
 pub const ITEMS: Map<&[u8], ItemInfo> = Map::new("items");

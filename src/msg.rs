@@ -25,6 +25,8 @@ pub enum ExecuteMsg {
     RetireBids{},
     /// Owner can withdraw the nft at the end of the sale
     OwnerWithdrawNft{},
+    /// Instant buy if allowed on the sale
+    InstantBuy{},
     /// This accepts a properly-encoded ReceiveMsg from a cw721 contract
     Receive(Cw721ReceiveMsg),
 }
