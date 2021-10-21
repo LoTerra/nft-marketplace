@@ -44,9 +44,11 @@ pub fn instantiate(
 
     let cw20_sub_msg = SubMsg::reply_on_success(cw20_msg, 0);
     let cw721_sub_msg = SubMsg::reply_on_success(cw721_msg, 1);
-    Ok(Response::new().add_submessage(cw20_sub_msg).add_submessage(cw721_sub_msg)
-        .add_attribute("method", "instantiate")
-        .add_attribute("owner", info.sender)
+    Ok(Response::new()
+           .add_submessage(cw20_sub_msg)
+           .add_submessage(cw721_sub_msg)
+           .add_attribute("method", "instantiate")
+           .add_attribute("owner", info.sender))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
