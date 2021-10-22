@@ -10,7 +10,7 @@ use crate::msg::{
     CharityResponse, CountResponse, ExecuteMsg, InstantiateMsg, QueryMsg, ReceiveMsg,
 };
 use crate::state::{
-    BidAmountTimeInfo, BidInfo, CharityInfo, ItemInfo, State, BIDDER, BIDS, CONFIG, ITEMS, STATE,
+    BidAmountTimeInfo, BidInfo, CharityInfo, ItemInfo, State, BIDS, CONFIG, ITEMS, STATE,
 };
 
 // version info for migration info
@@ -65,7 +65,7 @@ pub fn instantiate(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
@@ -317,11 +317,13 @@ pub fn execute_retire_bids(
     // Check the highest bidder is not the winner of the auction
     let highest_bid = item.highest_bid.unwrap_or_default();
     let reserve_price = item.reserve_price.unwrap_or_default();
-    if highest_bid.is_zero() && reserve_price.is_zero() {
 
-    }
+    // Check if the highest bidder is the sender
     if item.highest_bidder == sender_raw {
-        return Err(ContractError::Unauthorized {})
+        // Check if the reserve price have been reached
+        if reserve_price >= highest_bid {
+            return Err(ContractError::Unauthorized {})
+        }
     }
     // Check total bid is not 0
     if bid.total_bid.is_zero() {
@@ -631,7 +633,16 @@ mod tests {
     fn proper_initialization() {
         let mut deps = mock_dependencies(&[]);
 
-        let msg = InstantiateMsg { count: 17 };
+        let msg = InstantiateMsg {
+            denom: "uusd".to_string(),
+            cw20_code_id: 9,
+            cw20_msg: (),
+            cw20_label: "".to_string(),
+            cw721_code_id: 10,
+            cw721_msg: (),
+            cw721_label: "".to_string(),
+            bid_margin: 5 };
+
         let info = mock_info("creator", &coins(1000, "earth"));
 
         // we can just call .unwrap() to assert this was a success
@@ -645,49 +656,43 @@ mod tests {
     }
 
     #[test]
-    fn increment() {
+    fn create_auction() {
         let mut deps = mock_dependencies(&coins(2, "token"));
 
-        let msg = InstantiateMsg { count: 17 };
-        let info = mock_info("creator", &coins(2, "token"));
+        let msg = InstantiateMsg {
+            denom: "uusd".to_string(),
+            cw20_code_id: 9,
+            cw20_msg: (),
+            cw20_label: "cw20".to_string(),
+            cw721_code_id: 10,
+            cw721_msg: (),
+            cw721_label: "cw721".to_string(),
+            bid_margin: 5 };
+
+        let info = mock_info("creator",  &vec![]);
         let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
 
-        // beneficiary can release it
-        let info = mock_info("anyone", &coins(2, "token"));
-        let msg = ExecuteMsg::Increment {};
-        let _res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+        // create auction with end_time inferior current time
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: None,
+            start_time: None,
+            end_time: 0,
+            charity: None,
+            instant_buy: None,
+            reserve_price: None,
+            private_sale_privilege: None
+        };
+        let send_msg = cw721::Cw721ReceiveMsg{
+            sender: "market".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap()
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
 
-        // should increase counter by 1
-        let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-        let value: CountResponse = from_binary(&res).unwrap();
-        assert_eq!(18, value.count);
+        let res = execute(deps.as_mut(),mock_env(), mock_info("sender", &vec![]), execute_msg);
+        println!("{:?}", res);
+
+
     }
 
-    #[test]
-    fn reset() {
-        let mut deps = mock_dependencies(&coins(2, "token"));
-
-        let msg = InstantiateMsg { count: 17 };
-        let info = mock_info("creator", &coins(2, "token"));
-        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-        // beneficiary can release it
-        let unauth_info = mock_info("anyone", &coins(2, "token"));
-        let msg = ExecuteMsg::Reset { count: 5 };
-        let res = execute(deps.as_mut(), mock_env(), unauth_info, msg);
-        match res {
-            Err(ContractError::Unauthorized {}) => {}
-            _ => panic!("Must return unauthorized error"),
-        }
-
-        // only the original creator can reset the counter
-        let auth_info = mock_info("creator", &coins(2, "token"));
-        let msg = ExecuteMsg::Reset { count: 5 };
-        let _res = execute(deps.as_mut(), mock_env(), auth_info, msg).unwrap();
-
-        // should now be 5
-        let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-        let value: CountResponse = from_binary(&res).unwrap();
-        assert_eq!(5, value.count);
-    }
 }
