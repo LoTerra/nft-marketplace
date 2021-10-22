@@ -1,9 +1,6 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{
-    from_binary, to_binary, Binary, CanonicalAddr, Coin, CosmosMsg, Deps, DepsMut, Env,
-    MessageInfo, Reply, Response, StdResult, SubMsg, Uint128, WasmMsg,
-};
+use cosmwasm_std::{from_binary, to_binary, Binary, CanonicalAddr, Coin, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdResult, SubMsg, Uint128, WasmMsg, BankMsg};
 use cw2::set_contract_version;
 use cw20::Cw20ReceiveMsg;
 use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
@@ -278,8 +275,8 @@ pub fn execute_create_auction(
             start_price: Some(start_price.unwrap_or_default()),
             start_time: Some(start_time?),
             end_time,
-            highest_bid: Uint128::zero(),
-            highest_bidder: Default::default(),
+            highest_bid: None,
+            highest_bidder: None,
             nft_contract: contract_raw,
             nft_id: token_id.clone(),
             total_bids: 0,
@@ -306,8 +303,102 @@ pub fn execute_retire_bids(
     info: MessageInfo,
     auction_id: u64,
 ) -> Result<Response, ContractError> {
-    Ok(Response::default())
+    let sender_raw = deps.api.addr_canonicalize(&info.sender.as_str())?;
+    let config = CONFIG.load(deps.storage)?;
+
+    let item = ITEMS.load(deps.storage, &auction_id.to_be_bytes())?;
+    let bid = BIDS.load(deps.storage,(&auction_id.to_be_bytes(), &sender_raw.as_slice()))?;
+
+    // check the auction ended
+    if env.block.time < item.end_time {
+        return Err(ContractError::Unauthorized {})
+    }
+
+    // Check the highest bidder is not the winner of the auction
+    let highest_bid = item.highest_bid.unwrap_or_default();
+    let reserve_price = item.reserve_price.unwrap_or_default();
+    if highest_bid.is_zero() && reserve_price.is_zero() {
+
+    }
+    if item.highest_bidder == sender_raw {
+        return Err(ContractError::Unauthorized {})
+    }
+    // Check total bid is not 0
+    if bid.total_bid.is_zero() {
+        return Err(ContractError::Unauthorized {})
+    }
+
+    let msg = CosmosMsg::Bank(
+        BankMsg::Send { to_address: info.sender.to_string(), amount: vec![Coin{ denom: config.denom, amount: bid.total_bid }] });
+
+    let res = Response::new()
+        .add_message(msg)
+        .add_attribute("auction_id", auction_id)
+        .add_attribute("refund_amount", bid.total_bid)
+        .add_attribute("recipient", info.sender.to_string());
+
+    Ok(res)
 }
+
+pub fn execute_withdraw_nft(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    auction_id: u64,
+) -> Result<Response, ContractError> {
+    let sender_raw = deps.api.addr_canonicalize(&info.sender.as_str())?;
+    let config = CONFIG.load(deps.storage)?;
+
+    let item = ITEMS.load(deps.storage, &auction_id.to_be_bytes())?;
+    let bid = BIDS.load(deps.storage,(&auction_id.to_be_bytes(), &sender_raw.as_slice()))?;
+
+    // check the auction ended
+    if env.block.time < item.end_time {
+        return Err(ContractError::Unauthorized {})
+    }
+
+    let recipient_address_raw = match item.highest_bidder {
+        None => Some(item.creator),
+        Some(address) => {
+            let reserve_price = item.reserve_price.unwrap_or_default();
+            let highest_bid = item.highest_bid.unwrap_or_default();
+            // Check if the reserve price was reached
+            if highest_bid.is_zero() && reserve_price.is_zero() {
+                Some(item.creator.clone())
+            }
+            if item.reserve_price.unwrap_or_default() > item.highest_bid.unwrap_or_default(){
+                Some(item.creator)
+            }
+            else{
+                Some(address)
+            }
+        }
+    }?;
+
+    /*
+      Prepare msg to send the NFT to the new owner
+   */
+    let new_owner = deps.api.addr_humanize(&recipient_address_raw)?;
+    let msg_transfer_nft = Cw721ExecuteMsg::TransferNft {
+        recipient: new_owner.to_string(),
+        token_id: item.nft_id,
+    };
+    let msg_execute = CosmosMsg::Wasm(WasmMsg::Execute {
+        contract_addr: deps.api.addr_humanize(&item.nft_contract)?.to_string(),
+        msg: to_binary(&msg_transfer_nft)?,
+        funds: vec![],
+    });
+
+    let res = Response::new()
+        .add_message(msg_execute)
+        .add_attribute("auction_type", "NFT")
+        .add_attribute("auction_id", auction_id)
+        .add_attribute("sender", info.sender)
+        .add_attribute("creator", deps.api.addr_humanize(&item.creator)?.to_string())
+        .add_attribute("recipient", new_owner.to_string());
+    Ok(res)
+}
+
 
 pub fn execute_place_bid(
     deps: DepsMut,
@@ -328,10 +419,7 @@ pub fn execute_place_bid(
         _ => Err(ContractError::MultipleDenoms {}),
     }?;
 
-    let item = match ITEMS.may_load(deps.storage, &auction_id.to_be_bytes())? {
-        None => Err(ContractError::Unauthorized {}),
-        Some(item) => Ok(item),
-    }?;
+    let item = ITEMS.load(deps.storage, &auction_id.to_be_bytes())?;
 
     let bid = match item.private_sale_privilege {
         None => None,
@@ -352,8 +440,20 @@ pub fn execute_place_bid(
         }
     };
 
-    let bid_margin = item.highest_bid.multiply_ratio(config.bid_margin, 100);
-    let min_bid = item.highest_bid.checked_add(bid_margin)?;
+    let current_bid = match item.start_price {
+        None => Some(item.highest_bid.unwrap_or_default()),
+        Some(start_price) => {
+            if start_price > item.highest_bid.unwrap_or_default() {
+                 Some(start_price);
+            }
+            else {
+                Some(item.highest_bid.unwrap_or_default())
+            }
+        }
+    }?;
+
+    let bid_margin = current_bid.multiply_ratio(config.bid_margin, 100);
+    let min_bid = current_bid.checked_add(bid_margin)?;
     if sent < min_bid {
         return Err(ContractError::MinBid(min_bid));
     }
@@ -363,8 +463,8 @@ pub fn execute_place_bid(
         &auction_id.to_be_bytes(),
         |item| -> StdResult<_> {
             let mut updated_item = item?;
-            updated_item.highest_bid = sent;
-            updated_item.highest_bidder = sender_raw;
+            updated_item.highest_bid = Some(sent);
+            updated_item.highest_bidder = Some(sender_raw);
             updated_item.total_bids += 1;
 
             Ok(updated_item)
@@ -469,8 +569,8 @@ pub fn execute_instant_buy(
         |item| -> StdResult<_> {
             let mut updated_item = item?;
             updated_item.end_time = env.block.time.seconds();
-            updated_item.highest_bid = instant_buy_amount;
-            updated_item.highest_bidder = sender_raw;
+            updated_item.highest_bid = Some(instant_buy_amount);
+            updated_item.highest_bidder = Some(sender_raw);
             updated_item.total_bids += 1;
 
             Ok(updated_item)
