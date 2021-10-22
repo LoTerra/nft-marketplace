@@ -117,7 +117,7 @@ pub fn execute_receive_cw721(
             private_sale_privilege,
         ),
         _ => Err(ContractError::Unauthorized {}),
-    }
+    };
     Ok(Response::default())
 }
 
@@ -145,7 +145,7 @@ pub fn execute_receive_cw20(
             auction_id,
         ),
         _ => Err(ContractError::Unauthorized {}),
-    }
+    };
     Ok(Response::default())
 }
 
@@ -171,16 +171,17 @@ pub fn execute_register_private_sale(
             if amount != sent {
                 return Err(ContractError::Unauthorized {});
             }
+            Ok(())
         }
-    }
+    }?;
 
     // Check if existing bid return error
     match BIDS.may_load(
         deps.storage,
         (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-    )? {
-        None => None,
-        Some(_) => Err(ContractError::Unauthorized {}),
+    ) {
+        Ok(_) => Err(ContractError::Unauthorized {}),
+        Err(_) => Ok(())
     };
 
     // Save Privilege
@@ -197,9 +198,9 @@ pub fn execute_register_private_sale(
     )?;
 
     let res = Response::new()
-        .add_attribute("register_auction", auction_id)
+        .add_attribute("register_auction", auction_id.to_string())
         .add_attribute("sender", sender.to_string())
-        .add_attribute("amount_required", sent);
+        .add_attribute("amount_required", sent.to_string());
 
     Ok(res)
 }
@@ -267,13 +268,14 @@ pub fn execute_create_auction(
         }
     };
 
+
     ITEMS.save(
         deps.storage,
         &state.counter_items.to_be_bytes(),
         &ItemInfo {
             creator: sender_raw,
-            start_price: Some(start_price.unwrap_or_default()),
-            start_time: Some(start_time?),
+            start_price,
+            start_time,
             end_time,
             highest_bid: None,
             highest_bidder: None,
@@ -282,7 +284,7 @@ pub fn execute_create_auction(
             total_bids: 0,
             charity: valid_charity,
             instant_buy: instant_buy_price,
-            reserve_price: Some(reserve_price?),
+            reserve_price,
             private_sale_privilege: private_sale_price,
         },
     )?;
@@ -293,7 +295,7 @@ pub fn execute_create_auction(
         .add_attribute("contract_minter", info.sender)
         .add_attribute("creator", sender)
         .add_attribute("new_temporal_owner", env.contract.address)
-        .add_attribute("auction_id", state.counter_items);
+        .add_attribute("auction_id", state.counter_items.to_string());
     Ok(res)
 }
 
@@ -310,7 +312,7 @@ pub fn execute_retire_bids(
     let bid = BIDS.load(deps.storage,(&auction_id.to_be_bytes(), &sender_raw.as_slice()))?;
 
     // check the auction ended
-    if env.block.time < item.end_time {
+    if env.block.time.seconds() < item.end_time {
         return Err(ContractError::Unauthorized {})
     }
 
@@ -319,12 +321,18 @@ pub fn execute_retire_bids(
     let reserve_price = item.reserve_price.unwrap_or_default();
 
     // Check if the highest bidder is the sender
-    if item.highest_bidder == sender_raw {
-        // Check if the reserve price have been reached
-        if reserve_price >= highest_bid {
-            return Err(ContractError::Unauthorized {})
+    match item.highest_bidder {
+        None => {}
+        Some(highest_bidder) => {
+            if highest_bidder == sender_raw {
+                // Check if the reserve price have been reached
+                if reserve_price >= highest_bid {
+                    return Err(ContractError::Unauthorized {})
+                }
+            }
         }
     }
+
     // Check total bid is not 0
     if bid.total_bid.is_zero() {
         return Err(ContractError::Unauthorized {})
@@ -335,7 +343,7 @@ pub fn execute_retire_bids(
 
     let res = Response::new()
         .add_message(msg)
-        .add_attribute("auction_id", auction_id)
+        .add_attribute("auction_id", auction_id.to_string())
         .add_attribute("refund_amount", bid.total_bid)
         .add_attribute("recipient", info.sender.to_string());
 
@@ -355,7 +363,7 @@ pub fn execute_withdraw_nft(
     let bid = BIDS.load(deps.storage,(&auction_id.to_be_bytes(), &sender_raw.as_slice()))?;
 
     // check the auction ended
-    if env.block.time < item.end_time {
+    if env.block.time.seconds() < item.end_time {
         return Err(ContractError::Unauthorized {})
     }
 
@@ -366,14 +374,12 @@ pub fn execute_withdraw_nft(
             let highest_bid = item.highest_bid.unwrap_or_default();
             // Check if the reserve price was reached
             if highest_bid.is_zero() && reserve_price.is_zero() {
-                Some(item.creator.clone())
+                 Some(item.creator.clone())
             }
             if item.reserve_price.unwrap_or_default() > item.highest_bid.unwrap_or_default(){
                 Some(item.creator)
             }
-            else{
-                Some(address)
-            }
+            Some(address)
         }
     }?;
 
@@ -579,42 +585,26 @@ pub fn execute_instant_buy(
         },
     )?;
 
-    /*
-       Prepare msg to send the NFT to the new owner
-    */
-    let msg_transfer_nft = Cw721ExecuteMsg::TransferNft {
-        recipient: info.sender.to_string(),
-        token_id: item.nft_id,
-    };
-    let msg_execute = CosmosMsg::Wasm(WasmMsg::Execute {
-        contract_addr: deps.api.addr_humanize(&item.nft_contract)?.to_string(),
-        msg: to_binary(&msg_transfer_nft)?,
-        funds: vec![],
-    });
 
     let res = Response::new()
-        .add_message(msg_execute)
-        .add_attribute("create_auction_type", "NFT")
-        .add_attribute("token_id", token_id)
-        .add_attribute("contract_minter", info.sender)
-        .add_attribute("creator", sender)
-        .add_attribute("new_temporal_owner", env.contract.address);
+        .add_attribute("create_auction_type", "NFT");
     Ok(res)
 }
 
-#[cfg_attr(not(feature = "library"), entry_point)]
-pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractError> {
-    match msg.id {
-        0 => cw20_instance_reply(deps, env, msg.result),
-        1 => cw721_instance_reply(deps, env, msg.result),
-        _ => Err(ContractError::Unauthorized {}),
-    }
-}
+// #[cfg_attr(not(feature = "library"), entry_point)]
+// pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractError> {
+//     match msg.id {
+//         0 => cw20_instance_reply(deps, env, msg.result),
+//         1 => cw721_instance_reply(deps, env, msg.result),
+//         _ => Err(ContractError::Unauthorized {}),
+//     }
+// }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::GetCount {} => to_binary(&query_count(deps)?),
+        _ => {}
     }
 }
 
