@@ -74,7 +74,6 @@ pub struct BidInfo {
 
 pub const BIDS: Map<(&[u8], &[u8]), BidInfo> = Map::new("bids");
 
-
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct UserInfo {
     pub bidding_stats: u64,
@@ -82,7 +81,7 @@ pub struct UserInfo {
     pub winning_auctions_stats: u64,
     pub created_auctions_stats: u64,
     pub auctions_stats: u64,
-    pub total_spend_stats: Uint128
+    pub total_spend_stats: Uint128,
 }
 
 pub const USERS: Map<&[u8], UserInfo> = Map::new("users");

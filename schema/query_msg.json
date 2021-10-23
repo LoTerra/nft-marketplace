@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "QueryMsg",
-  "anyOf": [
+  "oneOf": [
     {
       "type": "object",
       "required": [
@@ -9,6 +9,19 @@
       ],
       "properties": {
         "get_count": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Get on sale NFT's",
+      "type": "object",
+      "required": [
+        "on_sale"
+      ],
+      "properties": {
+        "on_sale": {
           "type": "object"
         }
       },
