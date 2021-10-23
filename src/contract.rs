@@ -1,6 +1,6 @@
 use cosmwasm_std::{
-    from_binary, to_binary, BankMsg, Binary, CanonicalAddr, Coin, CosmosMsg, Deps, DepsMut, Env,
-    MessageInfo, Reply, Response, StdResult, SubMsg, Uint128, WasmMsg, entry_point
+    entry_point, from_binary, to_binary, BankMsg, Binary, CanonicalAddr, Coin, CosmosMsg, Deps,
+    DepsMut, Env, MessageInfo, Reply, Response, StdResult, SubMsg, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
 use cw20::Cw20ReceiveMsg;
@@ -17,7 +17,7 @@ use crate::state::{
 // version info for migration info
 const CONTRACT_NAME: &str = "crates.io:marketplace";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
-
+const MIN_TIME_AUCTION: u64 = 600;
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
@@ -28,7 +28,7 @@ pub fn instantiate(
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
     let config = Config {
         denom: msg.denom,
-        bid_margin: msg.bid_margin
+        bid_margin: msg.bid_margin,
     };
 
     CONFIG.save(deps.storage, &config)?;
@@ -36,7 +36,7 @@ pub fn instantiate(
     let state = State {
         counter_items: 0,
         cw20_address: deps.api.addr_canonicalize(&env.contract.address.as_str())?,
-        cw721_address: deps.api.addr_canonicalize(&env.contract.address.as_str())?
+        cw721_address: deps.api.addr_canonicalize(&env.contract.address.as_str())?,
     };
     STATE.save(deps.storage, &state)?;
     /*
@@ -227,21 +227,27 @@ pub fn execute_create_auction(
     private_sale_privilege: Option<Uint128>,
 ) -> Result<Response, ContractError> {
     let mut state = STATE.load(deps.storage)?;
-    state.counter_items += 1;
-    STATE.save(deps.storage, &state)?;
 
     let sender_raw = deps.api.addr_canonicalize(sender.as_ref())?;
     let contract_raw = deps.api.addr_canonicalize(info.sender.as_ref())?;
 
-    if env.block.time.seconds() > end_time {
+    if env.block.time.seconds() > end_time.checked_add(MIN_TIME_AUCTION).unwrap() {
         return Err(ContractError::EndTimeExpired {});
+    }
+    match start_time {
+        None => {}
+        Some(time) => {
+            if time <= end_time.checked_add(MIN_TIME_AUCTION).unwrap() {
+                return Err(ContractError::EndTimeExpired {});
+            }
+        }
     }
 
     // Validate charity data
     let valid_charity = match charity {
         None => None,
         Some(info) => {
-            if info.fee_percentage < 0 || info.fee_percentage > 100 {
+            if info.fee_percentage <= 0 || info.fee_percentage > 100 {
                 return Err(ContractError::PercentageFormat {});
             }
             let addr_validate = deps.api.addr_validate(info.address.as_str())?;
@@ -295,13 +301,19 @@ pub fn execute_create_auction(
         },
     )?;
 
+    state.counter_items += 1;
+    STATE.save(deps.storage, &state)?;
+
     let res = Response::new()
         .add_attribute("create_auction_type", "NFT")
         .add_attribute("token_id", token_id)
         .add_attribute("contract_minter", info.sender)
         .add_attribute("creator", sender)
         .add_attribute("new_temporal_owner", env.contract.address)
-        .add_attribute("auction_id", state.counter_items.to_string());
+        .add_attribute(
+            "auction_id",
+            state.counter_items.checked_sub(1).unwrap().to_string(),
+        );
     Ok(res)
 }
 
@@ -634,12 +646,10 @@ fn query_count(deps: Deps) -> StdResult<CountResponse> {
 mod tests {
     use super::*;
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MOCK_CONTRACT_ADDR};
-    use cosmwasm_std::{coins, from_binary, StdError};
-
+    use cosmwasm_std::{coins, from_binary, Api, Attribute, StdError};
 
     #[test]
     fn proper_initialization() {
-
         let mut deps = mock_dependencies(&[]);
         let info = mock_info("creator", &[]);
         let env = mock_env();
@@ -678,7 +688,7 @@ mod tests {
         let info = mock_info("creator", &vec![]);
         let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
 
-        // create auction with end_time inferior current time
+        // ERROR create auction with end_time inferior current time
         let msg = ReceiveMsg::CreateAuctionNft {
             start_price: None,
             start_time: None,
@@ -700,9 +710,65 @@ mod tests {
             mock_env(),
             mock_info("sender", &vec![]),
             execute_msg,
-        ).unwrap_err();
+        )
+        .unwrap_err();
 
-        // create auction
+        // ERROR create auction with time end == time start
+        let env = mock_env();
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: None,
+            start_time: Some(env.block.time.plus_seconds(1000).seconds()),
+            end_time: env.block.time.plus_seconds(1000).seconds(),
+            charity: None,
+            instant_buy: None,
+            reserve_price: None,
+            private_sale_privilege: None,
+        };
+        let send_msg = cw721::Cw721ReceiveMsg {
+            sender: "sender".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap(),
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap_err();
+
+        // ERROR create auction with time end superior now but with Option Charity info wrong fee_percentage
+        let env = mock_env();
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: None,
+            start_time: None,
+            end_time: env.block.time.plus_seconds(1000).seconds(),
+            charity: Some(CharityResponse {
+                address: "angel".to_string(),
+                fee_percentage: 101,
+            }),
+            instant_buy: None,
+            reserve_price: None,
+            private_sale_privilege: None,
+        };
+        let send_msg = cw721::Cw721ReceiveMsg {
+            sender: "sender".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap(),
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap_err();
+
+        // create auction with time end superior now but without options
         let env = mock_env();
         let msg = ReceiveMsg::CreateAuctionNft {
             start_price: None,
@@ -714,7 +780,7 @@ mod tests {
             private_sale_privilege: None,
         };
         let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "market".to_string(),
+            sender: "sender".to_string(),
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
@@ -723,8 +789,566 @@ mod tests {
         let res = execute(
             deps.as_mut(),
             mock_env(),
-            mock_info("sender", &vec![]),
+            mock_info("market", &vec![]),
             execute_msg,
+        )
+        .unwrap();
+        let item = ITEMS
+            .load(deps.as_ref().storage, &0_u64.to_be_bytes())
+            .unwrap();
+        assert_eq!(
+            item.creator,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("sender").unwrap().to_string())
+                .unwrap()
+        );
+        assert_eq!(item.highest_bid, None);
+        assert_eq!(item.nft_id, "test".to_string());
+        assert_eq!(item.start_time, None);
+        assert_eq!(item.start_price, None);
+        assert_eq!(item.highest_bidder, None);
+        assert_eq!(item.reserve_price, None);
+        assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
+        assert_eq!(item.private_sale_privilege, None);
+        assert_eq!(item.total_bids, 0);
+        assert_eq!(item.instant_buy, None);
+        assert_eq!(item.charity, None);
+        assert_eq!(
+            item.nft_contract,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("market").unwrap().to_string())
+                .unwrap()
+        );
+
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "create_auction_type".to_string(),
+                    value: "NFT".to_string()
+                },
+                Attribute {
+                    key: "token_id".to_string(),
+                    value: "test".to_string()
+                },
+                Attribute {
+                    key: "contract_minter".to_string(),
+                    value: "market".to_string()
+                },
+                Attribute {
+                    key: "creator".to_string(),
+                    value: "sender".to_string()
+                },
+                Attribute {
+                    key: "new_temporal_owner".to_string(),
+                    value: "cosmos2contract".to_string()
+                },
+                Attribute {
+                    key: "auction_id".to_string(),
+                    value: "0".to_string()
+                }
+            ]
+        );
+
+        // create auction with time end superior now but with Option start price
+        let env = mock_env();
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: Some(Uint128::from(1000_u128)),
+            start_time: None,
+            end_time: env.block.time.plus_seconds(1000).seconds(),
+            charity: None,
+            instant_buy: None,
+            reserve_price: None,
+            private_sale_privilege: None,
+        };
+        let send_msg = cw721::Cw721ReceiveMsg {
+            sender: "sender".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap(),
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        let item = ITEMS
+            .load(deps.as_ref().storage, &1_u64.to_be_bytes())
+            .unwrap();
+        assert_eq!(
+            item.creator,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("sender").unwrap().to_string())
+                .unwrap()
+        );
+        assert_eq!(item.highest_bid, None);
+        assert_eq!(item.nft_id, "test".to_string());
+        assert_eq!(item.start_time, None);
+        assert_eq!(item.start_price, Some(Uint128::from(1000_u128)));
+        assert_eq!(item.highest_bidder, None);
+        assert_eq!(item.reserve_price, None);
+        assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
+        assert_eq!(item.private_sale_privilege, None);
+        assert_eq!(item.total_bids, 0);
+        assert_eq!(item.instant_buy, None);
+        assert_eq!(item.charity, None);
+        assert_eq!(
+            item.nft_contract,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("market").unwrap().to_string())
+                .unwrap()
+        );
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "create_auction_type".to_string(),
+                    value: "NFT".to_string()
+                },
+                Attribute {
+                    key: "token_id".to_string(),
+                    value: "test".to_string()
+                },
+                Attribute {
+                    key: "contract_minter".to_string(),
+                    value: "market".to_string()
+                },
+                Attribute {
+                    key: "creator".to_string(),
+                    value: "sender".to_string()
+                },
+                Attribute {
+                    key: "new_temporal_owner".to_string(),
+                    value: "cosmos2contract".to_string()
+                },
+                Attribute {
+                    key: "auction_id".to_string(),
+                    value: "1".to_string()
+                }
+            ]
+        );
+
+        // create auction with time end superior now but with Option start price
+        let env = mock_env();
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: None,
+            start_time: Some(env.block.time.plus_seconds(2000).seconds()),
+            end_time: env.block.time.plus_seconds(1000).seconds(),
+            charity: None,
+            instant_buy: None,
+            reserve_price: None,
+            private_sale_privilege: None,
+        };
+        let send_msg = cw721::Cw721ReceiveMsg {
+            sender: "sender".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap(),
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        let item = ITEMS
+            .load(deps.as_ref().storage, &2_u64.to_be_bytes())
+            .unwrap();
+        assert_eq!(
+            item.creator,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("sender").unwrap().to_string())
+                .unwrap()
+        );
+        assert_eq!(item.highest_bid, None);
+        assert_eq!(item.nft_id, "test".to_string());
+        assert_eq!(
+            item.start_time,
+            Some(env.block.time.plus_seconds(2000).seconds())
+        );
+        assert_eq!(item.start_price, None);
+        assert_eq!(item.highest_bidder, None);
+        assert_eq!(item.reserve_price, None);
+        assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
+        assert_eq!(item.private_sale_privilege, None);
+        assert_eq!(item.total_bids, 0);
+        assert_eq!(item.instant_buy, None);
+        assert_eq!(item.charity, None);
+        assert_eq!(
+            item.nft_contract,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("market").unwrap().to_string())
+                .unwrap()
+        );
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "create_auction_type".to_string(),
+                    value: "NFT".to_string()
+                },
+                Attribute {
+                    key: "token_id".to_string(),
+                    value: "test".to_string()
+                },
+                Attribute {
+                    key: "contract_minter".to_string(),
+                    value: "market".to_string()
+                },
+                Attribute {
+                    key: "creator".to_string(),
+                    value: "sender".to_string()
+                },
+                Attribute {
+                    key: "new_temporal_owner".to_string(),
+                    value: "cosmos2contract".to_string()
+                },
+                Attribute {
+                    key: "auction_id".to_string(),
+                    value: "2".to_string()
+                }
+            ]
+        );
+
+        // create auction with time end superior now but with Option instant buy
+        let env = mock_env();
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: None,
+            start_time: None,
+            end_time: env.block.time.plus_seconds(1000).seconds(),
+            charity: None,
+            instant_buy: Some(Uint128::from(1000_u128)),
+            reserve_price: None,
+            private_sale_privilege: None,
+        };
+        let send_msg = cw721::Cw721ReceiveMsg {
+            sender: "sender".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap(),
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        let item = ITEMS
+            .load(deps.as_ref().storage, &3_u64.to_be_bytes())
+            .unwrap();
+        assert_eq!(
+            item.creator,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("sender").unwrap().to_string())
+                .unwrap()
+        );
+        assert_eq!(item.highest_bid, None);
+        assert_eq!(item.nft_id, "test".to_string());
+        assert_eq!(item.start_time, None);
+        assert_eq!(item.start_price, None);
+        assert_eq!(item.highest_bidder, None);
+        assert_eq!(item.reserve_price, None);
+        assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
+        assert_eq!(item.private_sale_privilege, None);
+        assert_eq!(item.total_bids, 0);
+        assert_eq!(item.instant_buy, Some(Uint128::from(1000_u128)));
+        assert_eq!(item.charity, None);
+        assert_eq!(
+            item.nft_contract,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("market").unwrap().to_string())
+                .unwrap()
+        );
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "create_auction_type".to_string(),
+                    value: "NFT".to_string()
+                },
+                Attribute {
+                    key: "token_id".to_string(),
+                    value: "test".to_string()
+                },
+                Attribute {
+                    key: "contract_minter".to_string(),
+                    value: "market".to_string()
+                },
+                Attribute {
+                    key: "creator".to_string(),
+                    value: "sender".to_string()
+                },
+                Attribute {
+                    key: "new_temporal_owner".to_string(),
+                    value: "cosmos2contract".to_string()
+                },
+                Attribute {
+                    key: "auction_id".to_string(),
+                    value: "3".to_string()
+                }
+            ]
+        );
+
+        // create auction with time end superior now but with Option reserve price
+        let env = mock_env();
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: None,
+            start_time: None,
+            end_time: env.block.time.plus_seconds(1000).seconds(),
+            charity: None,
+            instant_buy: None,
+            reserve_price: Some(Uint128::from(1000_u128)),
+            private_sale_privilege: None,
+        };
+        let send_msg = cw721::Cw721ReceiveMsg {
+            sender: "sender".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap(),
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        let item = ITEMS
+            .load(deps.as_ref().storage, &4_u64.to_be_bytes())
+            .unwrap();
+        assert_eq!(
+            item.creator,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("sender").unwrap().to_string())
+                .unwrap()
+        );
+        assert_eq!(item.highest_bid, None);
+        assert_eq!(item.nft_id, "test".to_string());
+        assert_eq!(item.start_time, None);
+        assert_eq!(item.start_price, None);
+        assert_eq!(item.highest_bidder, None);
+        assert_eq!(item.reserve_price, Some(Uint128::from(1000_u128)));
+        assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
+        assert_eq!(item.private_sale_privilege, None);
+        assert_eq!(item.total_bids, 0);
+        assert_eq!(item.instant_buy, None);
+        assert_eq!(item.charity, None);
+        assert_eq!(
+            item.nft_contract,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("market").unwrap().to_string())
+                .unwrap()
+        );
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "create_auction_type".to_string(),
+                    value: "NFT".to_string()
+                },
+                Attribute {
+                    key: "token_id".to_string(),
+                    value: "test".to_string()
+                },
+                Attribute {
+                    key: "contract_minter".to_string(),
+                    value: "market".to_string()
+                },
+                Attribute {
+                    key: "creator".to_string(),
+                    value: "sender".to_string()
+                },
+                Attribute {
+                    key: "new_temporal_owner".to_string(),
+                    value: "cosmos2contract".to_string()
+                },
+                Attribute {
+                    key: "auction_id".to_string(),
+                    value: "4".to_string()
+                }
+            ]
+        );
+
+        // create auction with time end superior now but with Option privilege sale
+        let env = mock_env();
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: None,
+            start_time: None,
+            end_time: env.block.time.plus_seconds(1000).seconds(),
+            charity: None,
+            instant_buy: None,
+            reserve_price: None,
+            private_sale_privilege: Some(Uint128::from(1000_u128)),
+        };
+        let send_msg = cw721::Cw721ReceiveMsg {
+            sender: "sender".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap(),
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        let item = ITEMS
+            .load(deps.as_ref().storage, &5_u64.to_be_bytes())
+            .unwrap();
+        assert_eq!(
+            item.creator,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("sender").unwrap().to_string())
+                .unwrap()
+        );
+        assert_eq!(item.highest_bid, None);
+        assert_eq!(item.nft_id, "test".to_string());
+        assert_eq!(item.start_time, None);
+        assert_eq!(item.start_price, None);
+        assert_eq!(item.highest_bidder, None);
+        assert_eq!(item.reserve_price, None);
+        assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
+        assert_eq!(item.private_sale_privilege, Some(Uint128::from(1000_u128)));
+        assert_eq!(item.total_bids, 0);
+        assert_eq!(item.instant_buy, None);
+        assert_eq!(item.charity, None);
+        assert_eq!(
+            item.nft_contract,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("market").unwrap().to_string())
+                .unwrap()
+        );
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "create_auction_type".to_string(),
+                    value: "NFT".to_string()
+                },
+                Attribute {
+                    key: "token_id".to_string(),
+                    value: "test".to_string()
+                },
+                Attribute {
+                    key: "contract_minter".to_string(),
+                    value: "market".to_string()
+                },
+                Attribute {
+                    key: "creator".to_string(),
+                    value: "sender".to_string()
+                },
+                Attribute {
+                    key: "new_temporal_owner".to_string(),
+                    value: "cosmos2contract".to_string()
+                },
+                Attribute {
+                    key: "auction_id".to_string(),
+                    value: "5".to_string()
+                }
+            ]
+        );
+
+        // create auction with time end superior now but with Option Charity info
+        let env = mock_env();
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: None,
+            start_time: None,
+            end_time: env.block.time.plus_seconds(1000).seconds(),
+            charity: Some(CharityResponse {
+                address: "angel".to_string(),
+                fee_percentage: 10,
+            }),
+            instant_buy: None,
+            reserve_price: None,
+            private_sale_privilege: None,
+        };
+        let send_msg = cw721::Cw721ReceiveMsg {
+            sender: "sender".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap(),
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        let item = ITEMS
+            .load(deps.as_ref().storage, &6_u64.to_be_bytes())
+            .unwrap();
+        assert_eq!(
+            item.creator,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("sender").unwrap().to_string())
+                .unwrap()
+        );
+        assert_eq!(item.highest_bid, None);
+        assert_eq!(item.nft_id, "test".to_string());
+        assert_eq!(item.start_time, None);
+        assert_eq!(item.start_price, None);
+        assert_eq!(item.highest_bidder, None);
+        assert_eq!(item.reserve_price, None);
+        assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
+        assert_eq!(item.private_sale_privilege, None);
+        assert_eq!(item.total_bids, 0);
+        assert_eq!(item.instant_buy, None);
+        assert_eq!(
+            item.charity,
+            Some(CharityInfo {
+                address: deps
+                    .api
+                    .addr_canonicalize(&deps.api.addr_validate("angel").unwrap().to_string())
+                    .unwrap(),
+                fee_percentage: 10
+            })
+        );
+        assert_eq!(
+            item.nft_contract,
+            deps.api
+                .addr_canonicalize(&deps.api.addr_validate("market").unwrap().to_string())
+                .unwrap()
+        );
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "create_auction_type".to_string(),
+                    value: "NFT".to_string()
+                },
+                Attribute {
+                    key: "token_id".to_string(),
+                    value: "test".to_string()
+                },
+                Attribute {
+                    key: "contract_minter".to_string(),
+                    value: "market".to_string()
+                },
+                Attribute {
+                    key: "creator".to_string(),
+                    value: "sender".to_string()
+                },
+                Attribute {
+                    key: "new_temporal_owner".to_string(),
+                    value: "cosmos2contract".to_string()
+                },
+                Attribute {
+                    key: "auction_id".to_string(),
+                    value: "6".to_string()
+                }
+            ]
         );
 
         println!("{:?}", res);
