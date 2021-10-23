@@ -1,8 +1,6 @@
-#[cfg(not(feature = "library"))]
-use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     from_binary, to_binary, BankMsg, Binary, CanonicalAddr, Coin, CosmosMsg, Deps, DepsMut, Env,
-    MessageInfo, Reply, Response, StdResult, SubMsg, Uint128, WasmMsg,
+    MessageInfo, Reply, Response, StdResult, SubMsg, Uint128, WasmMsg, entry_point
 };
 use cw2::set_contract_version;
 use cw20::Cw20ReceiveMsg;
@@ -28,12 +26,19 @@ pub fn instantiate(
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+    let config = Config {
+        denom: msg.denom,
+        bid_margin: msg.bid_margin
+    };
 
-    let mut config = CONFIG.load(deps.storage)?;
-    config.denom = msg.denom;
-    config.bid_margin = msg.bid_margin;
     CONFIG.save(deps.storage, &config)?;
 
+    let state = State {
+        counter_items: 0,
+        cw20_address: deps.api.addr_canonicalize(&env.contract.address.as_str())?,
+        cw721_address: deps.api.addr_canonicalize(&env.contract.address.as_str())?
+    };
+    STATE.save(deps.storage, &state)?;
     /*
        Instantiate a cw20, privilege using this cw20 like private sale...
     */
@@ -629,14 +634,13 @@ fn query_count(deps: Deps) -> StdResult<CountResponse> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    //use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-
-    use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
+    use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MOCK_CONTRACT_ADDR};
     use cosmwasm_std::{coins, from_binary};
+
 
     #[test]
     fn proper_initialization() {
+
         let mut deps = mock_dependencies(&[]);
         let info = mock_info("creator", &[]);
         let env = mock_env();
