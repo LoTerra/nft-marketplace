@@ -125,8 +125,7 @@ pub fn execute_receive_cw721(
             private_sale_privilege,
         ),
         _ => Err(ContractError::Unauthorized {}),
-    };
-    Ok(Response::default())
+    }
 }
 
 pub fn execute_receive_cw20(
@@ -635,7 +634,7 @@ fn query_count(deps: Deps) -> StdResult<CountResponse> {
 mod tests {
     use super::*;
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MOCK_CONTRACT_ADDR};
-    use cosmwasm_std::{coins, from_binary};
+    use cosmwasm_std::{coins, from_binary, StdError};
 
 
     #[test]
@@ -658,7 +657,7 @@ mod tests {
 
         // we can just call .unwrap() to assert this was a success
         let res = instantiate(deps.as_mut(), env, info, msg).unwrap();
-        assert_eq!(0, res.messages.len());
+        assert_eq!(2, res.messages.len());
     }
 
     #[test]
@@ -677,8 +676,7 @@ mod tests {
         };
 
         let info = mock_info("creator", &vec![]);
-        let _res = instantiate(deps.as_mut(), mock_env(), info, msg);
-        println!("{:?}", _res);
+        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
 
         // create auction with end_time inferior current time
         let msg = ReceiveMsg::CreateAuctionNft {
@@ -702,7 +700,33 @@ mod tests {
             mock_env(),
             mock_info("sender", &vec![]),
             execute_msg,
+        ).unwrap_err();
+
+        // create auction
+        let env = mock_env();
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: None,
+            start_time: None,
+            end_time: env.block.time.plus_seconds(1000).seconds(),
+            charity: None,
+            instant_buy: None,
+            reserve_price: None,
+            private_sale_privilege: None,
+        };
+        let send_msg = cw721::Cw721ReceiveMsg {
+            sender: "market".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap(),
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("sender", &vec![]),
+            execute_msg,
         );
+
         println!("{:?}", res);
     }
 }
