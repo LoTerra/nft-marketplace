@@ -1,6 +1,6 @@
 use cosmwasm_std::{
     entry_point, from_binary, to_binary, BankMsg, Binary, CanonicalAddr, Coin, CosmosMsg, Deps,
-    DepsMut, Env, MessageInfo, Reply, Response, StdResult, SubMsg, Uint128, WasmMsg,
+    DepsMut, Env, MessageInfo, Reply, Response, StdError, StdResult, SubMsg, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
 use cw20::Cw20ReceiveMsg;
@@ -458,10 +458,14 @@ pub fn execute_place_bid(
 
     let item = ITEMS.load(deps.storage, &auction_id.to_be_bytes())?;
 
-    let bid = match item.private_sale_privilege {
-        None => None,
+    if item.end_time < env.block.time.seconds() {
+        return Err(ContractError::EndTimeExpired {});
+    }
+
+    match item.private_sale_privilege {
+        None => Ok(()),
         Some(amount_required) => {
-            let bid = match BIDS.may_load(
+            match BIDS.may_load(
                 deps.storage,
                 (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
             )? {
@@ -470,12 +474,11 @@ pub fn execute_place_bid(
                     if amount_required != bid.privilege_used.unwrap_or_default() {
                         return Err(ContractError::PrivateSaleRestriction(amount_required));
                     }
-                    Ok(bid)
+                    Ok(())
                 }
-            }?;
-            Some(bid)
+            }
         }
-    };
+    }?;
 
     let current_bid = match item.start_price {
         None => item.highest_bid.unwrap_or_default(),
@@ -490,8 +493,17 @@ pub fn execute_place_bid(
 
     let bid_margin = current_bid.multiply_ratio(config.bid_margin as u128, 100 as u128);
     let min_bid = current_bid.checked_add(bid_margin).unwrap();
-    if sent < min_bid {
-        return Err(ContractError::MinBid(min_bid));
+    let bid_total_sent = match BIDS.may_load(
+        deps.storage,
+        (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+    )? {
+        None => Some(sent),
+        Some(bid_sent) => Some(bid_sent.total_bid.checked_add(sent).unwrap()),
+    }
+    .unwrap_or_else(|| sent);
+
+    if bid_total_sent < min_bid {
+        return Err(ContractError::MinBid(min_bid, bid_total_sent));
     }
 
     ITEMS.update(
@@ -499,7 +511,21 @@ pub fn execute_place_bid(
         &auction_id.to_be_bytes(),
         |item| -> StdResult<_> {
             let mut updated_item = item.unwrap();
-            updated_item.highest_bid = Some(sent);
+            // Cannot bid more than the instant buy price
+            match updated_item.instant_buy {
+                None => None,
+                Some(instant_buy) => {
+                    if instant_buy <= bid_total_sent {
+                        return Err(StdError::generic_err(format!(
+                            "Use instant buy price {0}, you are trying to bid higher {1}",
+                            instant_buy, bid_total_sent
+                        )));
+                    }
+                    Some(instant_buy)
+                }
+            };
+
+            updated_item.highest_bid = Some(bid_total_sent);
             updated_item.highest_bidder = Some(sender_raw.clone());
             updated_item.total_bids += 1;
 
@@ -507,7 +533,10 @@ pub fn execute_place_bid(
         },
     )?;
 
-    match bid {
+    match BIDS.may_load(
+        deps.storage,
+        (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+    )? {
         None => BIDS.save(
             deps.storage,
             (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
@@ -644,9 +673,12 @@ fn query_count(deps: Deps) -> StdResult<CountResponse> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
+    use crate::error::ContractError::MinBid;
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MOCK_CONTRACT_ADDR};
     use cosmwasm_std::{coins, from_binary, Api, Attribute, StdError};
+    use cw20::Cw20ExecuteMsg;
 
     #[test]
     fn proper_initialization() {
@@ -1350,7 +1382,344 @@ mod tests {
                 }
             ]
         );
+    }
 
+    #[test]
+    fn place_bid_auction() {
+        let mut deps = mock_dependencies(&coins(2, "token"));
+
+        let msg = InstantiateMsg {
+            denom: "uusd".to_string(),
+            cw20_code_id: 9,
+            cw20_msg: Default::default(),
+            cw20_label: "cw20".to_string(),
+            cw721_code_id: 10,
+            cw721_msg: Default::default(),
+            cw721_label: "cw721".to_string(),
+            bid_margin: 5,
+        };
+
+        let info = mock_info("creator", &vec![]);
+        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // ERROR create auction with end_time inferior current time
+        let env = mock_env();
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: None,
+            start_time: None,
+            end_time: env.block.time.plus_seconds(1000).seconds(),
+            charity: None,
+            instant_buy: None,
+            reserve_price: None,
+            private_sale_privilege: None,
+        };
+        let send_msg = cw721::Cw721ReceiveMsg {
+            sender: "market".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap(),
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("sender", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 1 };
+        // ERROR Wrong auction id
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "sender",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(1000_u128),
+                }],
+            ),
+            execute_msg,
+        )
+        .unwrap_err();
+
+        // ERROR sender empty funds
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 0 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("sender", &vec![]),
+            execute_msg.clone(),
+        )
+        .unwrap_err();
+
+        // Instantiate with start price 1000 ust
+        let env = mock_env();
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: Some(Uint128::from(1000_u128)),
+            start_time: None,
+            end_time: env.block.time.plus_seconds(1000).seconds(),
+            charity: None,
+            instant_buy: None,
+            reserve_price: None,
+            private_sale_privilege: None,
+        };
+        let send_msg = cw721::Cw721ReceiveMsg {
+            sender: "market".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap(),
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("sender", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 1 };
+        // ERROR sent not enough
+        let err = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "sender",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(1_u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap_err();
+
+        // Min Bid success Alice
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "alice",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(1050_u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap();
         println!("{:?}", res);
+        // Increase bid Bob
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "bob",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(2_000_u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap();
+        // Min fight bid success Alice
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "alice",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(1050_u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap();
+
+        // Bid closed expire
+        let mut env = mock_env();
+        env.block.time = env.block.time.plus_seconds(2000);
+        let item = ITEMS
+            .load(deps.as_ref().storage, &1_u64.to_be_bytes())
+            .unwrap();
+
+        // Bob fail increasing bid Bob and lose because time end
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "bob",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(3_000_u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap_err();
+        let alice_raw = deps.api.addr_canonicalize("alice").unwrap();
+        let bid_alice = BIDS
+            .load(
+                deps.as_ref().storage,
+                (&1_u64.to_be_bytes(), &alice_raw.as_slice()),
+            )
+            .unwrap();
+        assert_eq!(bid_alice.total_bid, Uint128::from(2100_u128));
+        assert_eq!(bid_alice.bids.len(), 2);
+        assert_eq!(bid_alice.bid_counter, 2);
+        assert_eq!(bid_alice.privilege_used, None);
+        assert_eq!(bid_alice.refunded, false);
+
+        let bob_raw = deps.api.addr_canonicalize("bob").unwrap();
+        let bid_bob = BIDS
+            .load(
+                deps.as_ref().storage,
+                (&1_u64.to_be_bytes(), &bob_raw.as_slice()),
+            )
+            .unwrap();
+        assert_eq!(bid_bob.total_bid, Uint128::from(2000_u128));
+        assert_eq!(bid_bob.bids.len(), 1);
+        assert_eq!(bid_bob.bid_counter, 1);
+        assert_eq!(bid_bob.privilege_used, None);
+        assert_eq!(bid_bob.refunded, false);
+
+        let item = ITEMS
+            .load(deps.as_ref().storage, &1_u64.to_be_bytes())
+            .unwrap();
+        assert_eq!(item.highest_bidder, Some(alice_raw));
+        assert_eq!(item.highest_bid, Some(Uint128::from(2100_u128)));
+        assert_eq!(item.total_bids, 3);
+        println!("{:?}", item);
+
+        // Instantiate with start price 1000 ust
+        let env = mock_env();
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: None,
+            start_time: None,
+            end_time: env.block.time.plus_seconds(1000).seconds(),
+            charity: None,
+            instant_buy: Some(Uint128::from(10_000_u128)),
+            reserve_price: None,
+            private_sale_privilege: None,
+        };
+        let send_msg = cw721::Cw721ReceiveMsg {
+            sender: "market".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap(),
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("sender", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 2 };
+        // ERROR Alice bidding higher than instant buy
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "alice",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(10_050_u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap_err();
+
+        // Instantiate with start price 1000 ust
+        let env = mock_env();
+        let msg = ReceiveMsg::CreateAuctionNft {
+            start_price: None,
+            start_time: None,
+            end_time: env.block.time.plus_seconds(1000).seconds(),
+            charity: None,
+            instant_buy: None,
+            reserve_price: None,
+            private_sale_privilege: Some(Uint128::from(10_000_u128)),
+        };
+        let send_msg = cw721::Cw721ReceiveMsg {
+            sender: "market".to_string(),
+            token_id: "test".to_string(),
+            msg: to_binary(&msg).unwrap(),
+        };
+        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("sender", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 3 };
+        // ERROR Private sale registration required
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "alice",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(1_000_u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap_err();
+        // Success Alice private sale registered
+
+        let msg = ExecuteMsg::ReceiveCw20(Cw20ReceiveMsg {
+            sender: "alice".to_string(),
+            amount: Uint128::from(10_000u128),
+            msg: to_binary(&ReceiveMsg::RegisterPrivateSale { auction_id: 3 }).unwrap(),
+        });
+
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                /*Should be CW20 address but the contract is set to ENV CONTRACT*/
+                MOCK_CONTRACT_ADDR,
+                &vec![],
+            ),
+            msg.clone(),
+        )
+        .unwrap();
+
+        let alice_raw = deps.api.addr_canonicalize("alice").unwrap();
+        let bid_alice = BIDS
+            .update(
+                deps.as_mut().storage,
+                (&3_u64.to_be_bytes(), &alice_raw.as_slice()),
+                |bid| -> StdResult<_> {
+                    let mut update_bid = bid.unwrap();
+                    update_bid.privilege_used = Some(Uint128::from(10_000u128));
+                    Ok(update_bid)
+                },
+            )
+            .unwrap();
+
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "alice",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(1_000_u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap();
     }
 }

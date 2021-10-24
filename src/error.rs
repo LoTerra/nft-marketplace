@@ -30,11 +30,14 @@ pub enum ContractError {
     #[error("Inaccurate funds for instant buying")]
     InaccurateFunds {},
 
-    #[error("Min bid amount is {0}")]
-    MinBid(Uint128),
+    #[error("Min bid amount is {0}, your total sent with this current amount is {1}")]
+    MinBid(Uint128, Uint128),
 
-    #[error("Registration amount required {0} PRIV token")]
+    #[error("Registration amount required {0} PRIV token, please register first")]
     PrivateSaleRestriction(Uint128),
+
+    #[error("Use instant buy price {0}, you are trying to bid higher {1}")]
+    UseInstantBuy(Uint128, Uint128),
     // Add any other custom errors you like here.
     // Look at https://docs.rs/thiserror/1.0.21/thiserror/ for details.
 }
