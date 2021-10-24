@@ -198,7 +198,6 @@ pub fn execute_register_private_sale(
             bids: vec![],
             bid_counter: 0,
             total_bid: Uint128::zero(),
-            refunded: false,
             privilege_used: Some(sent),
         },
     )?;
@@ -318,7 +317,7 @@ pub fn execute_create_auction(
 
 pub fn execute_retire_bids(
     deps: DepsMut,
-    env: Env,
+    _env: Env,
     info: MessageInfo,
     auction_id: u64,
 ) -> Result<Response, ContractError> {
@@ -331,24 +330,12 @@ pub fn execute_retire_bids(
         (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
     )?;
 
-    // check the auction ended
-    if env.block.time.seconds() < item.end_time {
-        return Err(ContractError::Unauthorized {});
-    }
-
-    // Check the highest bidder is not the winner of the auction
-    let highest_bid = item.highest_bid.unwrap_or_default();
-    let reserve_price = item.reserve_price.unwrap_or_default();
-
     // Check if the highest bidder is the sender
     match item.highest_bidder {
         None => {}
         Some(highest_bidder) => {
             if highest_bidder == sender_raw {
-                // Check if the reserve price have been reached
-                if reserve_price >= highest_bid {
-                    return Err(ContractError::Unauthorized {});
-                }
+                return Err(ContractError::Unauthorized {});
             }
         }
     }
@@ -357,6 +344,12 @@ pub fn execute_retire_bids(
     if bid.total_bid.is_zero() {
         return Err(ContractError::Unauthorized {});
     }
+
+    BIDS.update(deps.storage, (&auction_id.to_be_bytes(), &sender_raw.as_slice()), |bid| -> StdResult<_>{
+        let mut update_bid = bid.unwrap();
+        update_bid.total_bid = Uint128::zero();
+        Ok(update_bid)
+    })?;
 
     let msg = CosmosMsg::Bank(BankMsg::Send {
         to_address: info.sender.to_string(),
@@ -546,7 +539,6 @@ pub fn execute_place_bid(
                 }],
                 bid_counter: 1,
                 total_bid: sent,
-                refunded: false,
                 privilege_used: None,
             },
         )?,
@@ -1523,6 +1515,33 @@ mod tests {
             execute_msg.clone(),
         )
         .unwrap();
+        // Increase bid Sam
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "sam",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(2_100_u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+            .unwrap();
+        // ERROR sam retire bids before end because he is the higher bidder
+        let msg = ExecuteMsg::RetireBids { auction_id: 1 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "sam",
+                &vec![],
+            ),
+            msg.clone(),
+        )
+            .unwrap_err();
+
         // Min fight bid success Alice
         let res = execute(
             deps.as_mut(),
@@ -1531,12 +1550,25 @@ mod tests {
                 "alice",
                 &vec![Coin {
                     denom: "uusd".to_string(),
-                    amount: Uint128::from(1050_u128),
+                    amount: Uint128::from(1155_u128),
                 }],
             ),
             execute_msg.clone(),
         )
         .unwrap();
+
+        // SUCCESS sam retire bids before end because Alice is now the highest bidder
+        let msg = ExecuteMsg::RetireBids { auction_id: 1 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "sam",
+                &vec![],
+            ),
+            msg.clone(),
+        )
+            .unwrap();
 
         // Bid closed expire
         let mut env = mock_env();
@@ -1566,11 +1598,10 @@ mod tests {
                 (&1_u64.to_be_bytes(), &alice_raw.as_slice()),
             )
             .unwrap();
-        assert_eq!(bid_alice.total_bid, Uint128::from(2100_u128));
+        assert_eq!(bid_alice.total_bid, Uint128::from(2205_u128));
         assert_eq!(bid_alice.bids.len(), 2);
         assert_eq!(bid_alice.bid_counter, 2);
         assert_eq!(bid_alice.privilege_used, None);
-        assert_eq!(bid_alice.refunded, false);
 
         let bob_raw = deps.api.addr_canonicalize("bob").unwrap();
         let bid_bob = BIDS
@@ -1583,15 +1614,59 @@ mod tests {
         assert_eq!(bid_bob.bids.len(), 1);
         assert_eq!(bid_bob.bid_counter, 1);
         assert_eq!(bid_bob.privilege_used, None);
-        assert_eq!(bid_bob.refunded, false);
 
         let item = ITEMS
             .load(deps.as_ref().storage, &1_u64.to_be_bytes())
             .unwrap();
         assert_eq!(item.highest_bidder, Some(alice_raw));
-        assert_eq!(item.highest_bid, Some(Uint128::from(2100_u128)));
-        assert_eq!(item.total_bids, 3);
-        println!("{:?}", item);
+        assert_eq!(item.highest_bid, Some(Uint128::from(2205_u128)));
+        assert_eq!(item.total_bids, 4);
+
+        // ERROR Alice try to retire bids
+        let msg = ExecuteMsg::RetireBids { auction_id: 1 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "alice",
+                &vec![],
+            ),
+            msg.clone(),
+        )
+            .unwrap_err();
+
+        // SUCCESS bob to retire bids
+        let msg = ExecuteMsg::RetireBids { auction_id: 1 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "bob",
+                &vec![],
+            ),
+            msg.clone(),
+        )
+            .unwrap();
+
+        let bob_raw = deps.api.addr_canonicalize("bob").unwrap();
+        let bid_bob = BIDS
+            .load(
+                deps.as_ref().storage,
+                (&1_u64.to_be_bytes(), &bob_raw.as_slice()),
+            )
+            .unwrap();
+        assert_eq!(bid_bob.total_bid, Uint128::zero());
+        // ERROR to retire multiple times
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "bob",
+                &vec![],
+            ),
+            msg.clone(),
+        )
+            .unwrap_err();
 
         // Instantiate with start price 1000 ust
         let env = mock_env();
@@ -1771,4 +1846,79 @@ mod tests {
         )
         .unwrap();
     }
+
+    // #[test]
+    // fn remove_bid (){
+    //     let mut deps = mock_dependencies(&coins(2, "token"));
+    //     let msg = InstantiateMsg {
+    //         denom: "uusd".to_string(),
+    //         cw20_code_id: 9,
+    //         cw20_msg: Default::default(),
+    //         cw20_label: "cw20".to_string(),
+    //         cw721_code_id: 10,
+    //         cw721_msg: Default::default(),
+    //         cw721_label: "cw721".to_string(),
+    //         bid_margin: 5,
+    //     };
+    //
+    //     let info = mock_info("creator", &vec![]);
+    //     let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+    //
+    //     // Instantiate with start price 1000 ust
+    //     let env = mock_env();
+    //     let msg = ReceiveMsg::CreateAuctionNft {
+    //         start_price: Some(Uint128::from(1000_u128)),
+    //         start_time: None,
+    //         end_time: env.block.time.plus_seconds(1000).seconds(),
+    //         charity: None,
+    //         instant_buy: None,
+    //         reserve_price: None,
+    //         private_sale_privilege: None,
+    //     };
+    //     let send_msg = cw721::Cw721ReceiveMsg {
+    //         sender: "market".to_string(),
+    //         token_id: "test".to_string(),
+    //         msg: to_binary(&msg).unwrap(),
+    //     };
+    //     let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+    //     let res = execute(
+    //         deps.as_mut(),
+    //         env.clone(),
+    //         mock_info("sender", &vec![]),
+    //         execute_msg,
+    //     )
+    //         .unwrap();
+    //
+    //     let execute_msg = ExecuteMsg::PlaceBid { auction_id: 1 };
+    //
+    //     // Alice sent enough
+    //     let res = execute(
+    //         deps.as_mut(),
+    //         env.clone(),
+    //         mock_info(
+    //             "sender",
+    //             &vec![Coin {
+    //                 denom: "uusd".to_string(),
+    //                 amount: Uint128::from(1_200_u128),
+    //             }],
+    //         ),
+    //         execute_msg.clone(),
+    //     )
+    //         .unwrap();
+    //
+    //
+    //     // ERROR Alice try to remove bids
+    //     let msg = ExecuteMsg::RetireBids { auction_id: 1 };
+    //     let res = execute(
+    //         deps.as_mut(),
+    //         env.clone(),
+    //         mock_info(
+    //             "alice",
+    //             &vec![],
+    //         ),
+    //         msg.clone(),
+    //     )
+    //         .unwrap_err();
+    //     println!("{:?}", res);
+    // }
 }

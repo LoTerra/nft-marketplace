@@ -68,7 +68,6 @@ pub struct BidInfo {
     pub bids: Vec<BidAmountTimeInfo>,
     pub bid_counter: u64,
     pub total_bid: Uint128,
-    pub refunded: bool,
     pub privilege_used: Option<Uint128>,
 }
 
