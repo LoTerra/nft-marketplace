@@ -152,14 +152,13 @@ pub fn execute_receive_cw20(
             auction_id,
         ),
         _ => Err(ContractError::Unauthorized {}),
-    };
-    Ok(Response::default())
+    }
 }
 
 pub fn execute_register_private_sale(
     deps: DepsMut,
-    env: Env,
-    info: MessageInfo,
+    _env: Env,
+    _info: MessageInfo,
     sender: String,
     sent: Uint128,
     auction_id: u64,
@@ -186,9 +185,9 @@ pub fn execute_register_private_sale(
     match BIDS.may_load(
         deps.storage,
         (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-    ) {
-        Ok(_) => Err(ContractError::Unauthorized {}),
-        Err(_) => Ok(()),
+    )? {
+        None => {}
+        Some(_) => return Err(ContractError::Unauthorized {}),
     };
 
     // Save Privilege
@@ -1676,7 +1675,6 @@ mod tests {
         )
         .unwrap_err();
         // Success Alice private sale registered
-
         let msg = ExecuteMsg::ReceiveCw20(Cw20ReceiveMsg {
             sender: "alice".to_string(),
             amount: Uint128::from(10_000u128),
@@ -1694,6 +1692,57 @@ mod tests {
             msg.clone(),
         )
         .unwrap();
+
+        // ERROR Register multiple time
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                /*Should be CW20 address but the contract is set to ENV CONTRACT*/
+                MOCK_CONTRACT_ADDR,
+                &vec![],
+            ),
+            msg.clone(),
+        )
+        .unwrap_err();
+
+        // ERROR Send less
+        let msg = ExecuteMsg::ReceiveCw20(Cw20ReceiveMsg {
+            sender: "bob".to_string(),
+            amount: Uint128::from(5_000u128),
+            msg: to_binary(&ReceiveMsg::RegisterPrivateSale { auction_id: 3 }).unwrap(),
+        });
+
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                /*Should be CW20 address but the contract is set to ENV CONTRACT*/
+                MOCK_CONTRACT_ADDR,
+                &vec![],
+            ),
+            msg.clone(),
+        )
+        .unwrap_err();
+
+        // ERROR Send more
+        let msg = ExecuteMsg::ReceiveCw20(Cw20ReceiveMsg {
+            sender: "bob".to_string(),
+            amount: Uint128::from(5_000u128),
+            msg: to_binary(&ReceiveMsg::RegisterPrivateSale { auction_id: 3 }).unwrap(),
+        });
+
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                /*Should be CW20 address but the contract is set to ENV CONTRACT*/
+                MOCK_CONTRACT_ADDR,
+                &vec![],
+            ),
+            msg.clone(),
+        )
+        .unwrap_err();
 
         let alice_raw = deps.api.addr_canonicalize("alice").unwrap();
         let bid_alice = BIDS
