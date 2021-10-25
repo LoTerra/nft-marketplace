@@ -356,10 +356,13 @@ pub fn execute_retire_bids(
 
     let bank_msg = CosmosMsg::Bank(BankMsg::Send {
         to_address: info.sender.to_string(),
-        amount: vec![Coin {
-            denom: config.denom,
-            amount: bid.total_bid,
-        }],
+        amount: vec![deduct_tax(
+            &deps.querier,
+            Coin {
+                denom: config.denom.clone(),
+                amount: bid.total_bid,
+            },
+        )?],
     });
 
     let privilege_msg = Cw20ExecuteMsg::Mint {
