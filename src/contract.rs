@@ -1,9 +1,10 @@
 use cosmwasm_std::{
-    entry_point, from_binary, to_binary, BankMsg, Binary, CanonicalAddr, Coin, CosmosMsg, Deps,
-    DepsMut, Env, MessageInfo, Reply, Response, StdError, StdResult, SubMsg, Uint128, WasmMsg,
+    entry_point, from_binary, to_binary, BankMsg, Binary, CanonicalAddr, Coin, ContractResult,
+    CosmosMsg, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdError, StdResult, SubMsg,
+    SubMsgExecutionResponse, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
-use cw20::Cw20ReceiveMsg;
+use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
 
 use crate::error::ContractError;
@@ -36,7 +37,6 @@ pub fn instantiate(
     let state = State {
         counter_items: 0,
         cw20_address: deps.api.addr_canonicalize(&env.contract.address.as_str())?,
-        cw721_address: deps.api.addr_canonicalize(&env.contract.address.as_str())?,
     };
     STATE.save(deps.storage, &state)?;
     /*
@@ -50,22 +50,9 @@ pub fn instantiate(
         label: msg.cw20_label,
     });
 
-    /*
-       Instantiate a cw721 for minting nft's directly from creation as option
-    */
-    let cw721_msg = CosmosMsg::Wasm(WasmMsg::Instantiate {
-        admin: Some(env.contract.address.to_string()),
-        code_id: msg.cw721_code_id,
-        msg: msg.cw721_msg,
-        funds: vec![],
-        label: msg.cw721_label,
-    });
-
     let cw20_sub_msg = SubMsg::reply_on_success(cw20_msg, 0);
-    let cw721_sub_msg = SubMsg::reply_on_success(cw721_msg, 1);
     Ok(Response::new()
         .add_submessage(cw20_sub_msg)
-        .add_submessage(cw721_sub_msg)
         .add_attribute("method", "instantiate")
         .add_attribute("owner", info.sender))
 }
@@ -163,6 +150,7 @@ pub fn execute_register_private_sale(
     sent: Uint128,
     auction_id: u64,
 ) -> Result<Response, ContractError> {
+    let state = STATE.load(deps.storage)?;
     let sender_raw = deps.api.addr_canonicalize(sender.as_ref())?;
 
     let item = match ITEMS.may_load(deps.storage, &auction_id.to_be_bytes())? {
@@ -202,7 +190,15 @@ pub fn execute_register_private_sale(
         },
     )?;
 
+    let prepare_burn_msg = Cw20ExecuteMsg::Burn { amount: sent };
+    let burn_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+        contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
+        msg: to_binary(&prepare_burn_msg)?,
+        funds: vec![],
+    });
+
     let res = Response::new()
+        .add_message(burn_msg)
         .add_attribute("register_auction", auction_id.to_string())
         .add_attribute("sender", sender.to_string())
         .add_attribute("amount_required", sent.to_string());
@@ -323,6 +319,7 @@ pub fn execute_retire_bids(
 ) -> Result<Response, ContractError> {
     let sender_raw = deps.api.addr_canonicalize(&info.sender.as_str())?;
     let config = CONFIG.load(deps.storage)?;
+    let state = STATE.load(deps.storage)?;
 
     let item = ITEMS.load(deps.storage, &auction_id.to_be_bytes())?;
     let bid = BIDS.load(
@@ -355,7 +352,7 @@ pub fn execute_retire_bids(
         },
     )?;
 
-    let msg = CosmosMsg::Bank(BankMsg::Send {
+    let bank_msg = CosmosMsg::Bank(BankMsg::Send {
         to_address: info.sender.to_string(),
         amount: vec![Coin {
             denom: config.denom,
@@ -363,8 +360,19 @@ pub fn execute_retire_bids(
         }],
     });
 
+    let privilege_msg = Cw20ExecuteMsg::Mint {
+        recipient: info.sender.to_string(),
+        amount: Uint128::from(1_u128),
+    };
+    let execute_privilege_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+        contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
+        msg: to_binary(&privilege_msg)?,
+        funds: vec![],
+    });
+
     let res = Response::new()
-        .add_message(msg)
+        .add_message(execute_privilege_msg)
+        .add_message(bank_msg)
         .add_attribute("auction_id", auction_id.to_string())
         .add_attribute("refund_amount", bid.total_bid)
         .add_attribute("recipient", info.sender.to_string());
@@ -640,14 +648,44 @@ pub fn execute_instant_buy(
     Ok(res)
 }
 
-// #[cfg_attr(not(feature = "library"), entry_point)]
-// pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractError> {
-//     match msg.id {
-//         0 => cw20_instance_reply(deps, env, msg.result),
-//         1 => cw721_instance_reply(deps, env, msg.result),
-//         _ => Err(ContractError::Unauthorized {}),
-//     }
-// }
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractError> {
+    match msg.id {
+        0 => cw20_instance_reply(deps, env, msg.result),
+        _ => Err(ContractError::Unauthorized {}),
+    }
+}
+pub fn cw20_instance_reply(
+    deps: DepsMut,
+    _env: Env,
+    msg: ContractResult<SubMsgExecutionResponse>,
+) -> Result<Response, ContractError> {
+    let mut state = STATE.load(deps.storage)?;
+    match msg {
+        ContractResult::Ok(subcall) => {
+            let contract_address = subcall
+                .events
+                .into_iter()
+                .find(|e| e.ty == "instantiate_contract")
+                .and_then(|ev| {
+                    ev.attributes
+                        .into_iter()
+                        .find(|attr| attr.key == "contract_address")
+                        .and_then(|addr| Some(addr.value))
+                })
+                .unwrap();
+
+            state.cw20_address = deps.api.addr_canonicalize(&contract_address.as_str())?;
+            STATE.save(deps.storage, &state)?;
+
+            let res = Response::new()
+                .add_attribute("cw20-address", contract_address)
+                .add_attribute("action", "cw20-instantiate");
+            Ok(res)
+        }
+        ContractResult::Err(_) => Err(ContractError::Unauthorized {}),
+    }
+}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
@@ -692,7 +730,7 @@ mod tests {
 
         // we can just call .unwrap() to assert this was a success
         let res = instantiate(deps.as_mut(), env, info, msg).unwrap();
-        assert_eq!(2, res.messages.len());
+        assert_eq!(1, res.messages.len());
     }
 
     #[test]

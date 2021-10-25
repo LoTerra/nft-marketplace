@@ -16,7 +16,6 @@ pub const CONFIG: Item<Config> = Item::new("config");
 pub struct State {
     pub counter_items: u64,
     pub cw20_address: CanonicalAddr,
-    pub cw721_address: CanonicalAddr,
 }
 
 pub const STATE: Item<State> = Item::new("state");
@@ -26,14 +25,6 @@ pub struct CharityInfo {
     pub address: CanonicalAddr,
     pub fee_percentage: u8,
 }
-
-/*
-   TODO: Should we limit with spread bid like percentage max to increase the current bid
-   E.g
-   Current bid 100
-   Alice want to bid 1000 the percentage increase is 1000%
-   it's probably better to limit
-*/
 
 /*
    TODO: Should we ask for a collateral for selling ? in order to limit spam
@@ -73,14 +64,14 @@ pub struct BidInfo {
 
 pub const BIDS: Map<(&[u8], &[u8]), BidInfo> = Map::new("bids");
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct UserInfo {
-    pub bidding_stats: u64,
-    pub privilege_used_stats: Uint128,
-    pub winning_auctions_stats: u64,
-    pub created_auctions_stats: u64,
-    pub auctions_stats: u64,
-    pub total_spend_stats: Uint128,
-}
-
-pub const USERS: Map<&[u8], UserInfo> = Map::new("users");
+// #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+// pub struct UserInfo {
+//     pub bidding_stats: u64,
+//     pub privilege_used_stats: Uint128,
+//     pub winning_auctions_stats: u64,
+//     pub created_auctions_stats: u64,
+//     pub auctions_stats: u64,
+//     pub total_spend_stats: Uint128,
+// }
+//
+// pub const USERS: Map<&[u8], UserInfo> = Map::new("users");
