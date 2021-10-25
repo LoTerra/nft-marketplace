@@ -1,7 +1,7 @@
 use cosmwasm_std::{
     entry_point, from_binary, to_binary, BankMsg, Binary, CanonicalAddr, Coin, ContractResult,
-    CosmosMsg, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdError, StdResult, SubMsg,
-    SubMsgExecutionResponse, Uint128, WasmMsg,
+    CosmosMsg, Deps, DepsMut, Env, MessageInfo, Reply, ReplyOn, Response, StdError, StdResult,
+    SubMsg, SubMsgExecutionResponse, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
 use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
@@ -14,6 +14,7 @@ use crate::msg::{
 use crate::state::{
     BidAmountTimeInfo, BidInfo, CharityInfo, Config, ItemInfo, State, BIDS, CONFIG, ITEMS, STATE,
 };
+use crate::taxation::deduct_tax;
 
 // version info for migration info
 const CONTRACT_NAME: &str = "crates.io:marketplace";
@@ -292,6 +293,7 @@ pub fn execute_create_auction(
             instant_buy: instant_buy_price,
             reserve_price,
             private_sale_privilege: private_sale_price,
+            resolved: false,
         },
     )?;
 
@@ -386,13 +388,22 @@ pub fn execute_withdraw_nft(
     info: MessageInfo,
     auction_id: u64,
 ) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    let state = STATE.load(deps.storage)?;
     let item = ITEMS.load(deps.storage, &auction_id.to_be_bytes())?;
+
+    if item.resolved {
+        return Err(ContractError::Unauthorized {});
+    }
 
     // check the auction ended
     if env.block.time.seconds() < item.end_time {
         return Err(ContractError::Unauthorized {});
     }
 
+    let mut net_amount_after = Uint128::zero();
+    let mut charity_amount = Uint128::zero();
+    let mut charity_address = None;
     let recipient_address_raw = match item.highest_bidder {
         None => item.creator.clone(),
         Some(address) => match item.reserve_price {
@@ -400,6 +411,15 @@ pub fn execute_withdraw_nft(
             Some(reserve_price) => match item.highest_bid {
                 None => item.creator.clone(),
                 Some(highest_bid) => {
+                    match item.charity {
+                        None => {}
+                        Some(charity) => {
+                            charity_amount = highest_bid
+                                .multiply_ratio(charity.fee_percentage, Uint128::from(100_u128));
+                            net_amount_after = highest_bid.checked_sub(charity_amount).unwrap();
+                            charity_address = Some(charity.address);
+                        }
+                    }
                     if reserve_price > highest_bid {
                         item.creator.clone();
                     }
@@ -409,6 +429,15 @@ pub fn execute_withdraw_nft(
         },
     };
 
+    ITEMS.update(
+        deps.storage,
+        &auction_id.to_be_bytes(),
+        |item| -> StdResult<_> {
+            let mut update_item = item.unwrap();
+            update_item.resolved = true;
+            Ok(update_item)
+        },
+    )?;
     /*
        Prepare msg to send the NFT to the new owner
     */
@@ -423,7 +452,7 @@ pub fn execute_withdraw_nft(
         funds: vec![],
     });
 
-    let res = Response::new()
+    let mut res = Response::new()
         .add_message(msg_execute)
         .add_attribute("auction_type", "NFT")
         .add_attribute("auction_id", auction_id.to_string())
@@ -433,6 +462,93 @@ pub fn execute_withdraw_nft(
             deps.api.addr_humanize(&item.creator)?.to_string(),
         )
         .add_attribute("recipient", new_owner.to_string());
+
+    /*
+       TODO: Prepare msg to send rewards PRIV token
+    */
+    let send_amount = Uint128::from(5_u128);
+    // Send to creator
+    let prepare_transfer_seller_token_msg = SubMsg {
+        id: 1,
+        msg: CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
+            msg: to_binary(&Cw20ExecuteMsg::Transfer {
+                recipient: deps.api.addr_humanize(&item.creator)?.to_string(),
+                amount: send_amount,
+            })?,
+            funds: vec![],
+        }),
+        gas_limit: None,
+        reply_on: ReplyOn::Never,
+    };
+
+    res.messages.push(prepare_transfer_seller_token_msg);
+
+    // Send to winner if exist
+    if recipient_address_raw != item.creator {
+        let submsg = SubMsg {
+            id: 2,
+            msg: CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
+                msg: to_binary(&Cw20ExecuteMsg::Transfer {
+                    recipient: deps.api.addr_humanize(&recipient_address_raw)?.to_string(),
+                    amount: send_amount,
+                })?,
+                funds: vec![],
+            }),
+            gas_limit: None,
+            reply_on: ReplyOn::Never,
+        };
+        res.messages.push(submsg);
+
+        /*
+            TODO: Prepare msg to send payout discount charity
+        */
+        let prepare_msg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: deps.api.addr_humanize(&recipient_address_raw)?.to_string(),
+            amount: vec![deduct_tax(
+                &deps.querier,
+                Coin {
+                    denom: config.denom.clone(),
+                    amount: net_amount_after,
+                },
+            )?],
+        });
+        let execute_msg = SubMsg {
+            id: 3,
+            msg: prepare_msg,
+            gas_limit: None,
+            reply_on: ReplyOn::Always,
+        };
+        res.messages.push(execute_msg)
+    }
+
+    /*
+       TODO: Prepare msg to send charity if some charity
+    */
+    match charity_address {
+        None => {}
+        Some(address) => {
+            let prepare_msg = CosmosMsg::Bank(BankMsg::Send {
+                to_address: deps.api.addr_humanize(&address)?.to_string(),
+                amount: vec![deduct_tax(
+                    &deps.querier,
+                    Coin {
+                        denom: config.denom.clone(),
+                        amount: charity_amount,
+                    },
+                )?],
+            });
+            let execute_msg = SubMsg {
+                id: 4,
+                msg: prepare_msg,
+                gas_limit: None,
+                reply_on: ReplyOn::Always,
+            };
+            res.messages.push(execute_msg);
+        }
+    }
+
     Ok(res)
 }
 

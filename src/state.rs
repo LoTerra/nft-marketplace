@@ -44,6 +44,7 @@ pub struct ItemInfo {
     pub instant_buy: Option<Uint128>,
     pub reserve_price: Option<Uint128>,
     pub private_sale_privilege: Option<Uint128>,
+    pub resolved: bool,
 }
 
 pub const ITEMS: Map<&[u8], ItemInfo> = Map::new("items");
