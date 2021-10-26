@@ -381,9 +381,10 @@ pub fn execute_retire_bids(
             },
         )?],
     });
+    let mut msgs = vec![bank_msg];
 
     let mut res = Response::new()
-        .add_message(bank_msg)
+        .add_messages(msgs)
         .add_attribute("auction_id", auction_id.to_string())
         .add_attribute("refund_amount", bid.total_bid)
         .add_attribute("recipient", info.sender.to_string());
@@ -398,12 +399,7 @@ pub fn execute_retire_bids(
             msg: to_binary(&privilege_msg)?,
             funds: vec![],
         });
-        res.messages.push(SubMsg {
-            id: 1,
-            msg: execute_privilege_msg,
-            gas_limit: None,
-            reply_on: ReplyOn::Never,
-        });
+        msgs.push(execute_privilege_msg);
     }
 
     Ok(res)
