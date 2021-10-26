@@ -6,6 +6,7 @@ use cosmwasm_std::{
 use cw2::set_contract_version;
 use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
+use std::borrow::Borrow;
 
 use crate::error::ContractError;
 use crate::msg::{
@@ -443,13 +444,7 @@ pub fn execute_withdraw_nft(
                         Some(charity) => {
                             charity_amount = highest_bid
                                 .multiply_ratio(charity.fee_percentage, Uint128::from(100_u128));
-                            lota_fee_amount = highest_bid
-                                .multiply_ratio(config.lota_fee, Uint128::from(100_u128));
-                            net_amount_after = highest_bid
-                                .checked_sub(charity_amount)
-                                .unwrap()
-                                .checked_sub(lota_fee_amount)
-                                .unwrap();
+                            net_amount_after = highest_bid.checked_sub(charity_amount).unwrap();
                             charity_address = Some(charity.address);
                         }
                     }
@@ -461,6 +456,11 @@ pub fn execute_withdraw_nft(
             },
         },
     };
+
+    if let Some(highest_bid) = item.highest_bid {
+        lota_fee_amount = highest_bid.multiply_ratio(config.lota_fee, Uint128::from(100_u128));
+        net_amount_after = highest_bid.checked_sub(lota_fee_amount).unwrap();
+    }
 
     ITEMS.update(
         deps.storage,
@@ -485,8 +485,85 @@ pub fn execute_withdraw_nft(
         funds: vec![],
     });
 
+    let mut msgs = vec![msg_execute];
+    /*
+       TODO: Prepare msg to send rewards PRIV token
+    */
+    // Send to winner and creator if exist
+    if recipient_address_raw != item.creator {
+        let priv_reward_amount = Uint128::from(5_u128);
+
+        // Send to creator
+        msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
+            msg: to_binary(&Cw20ExecuteMsg::Transfer {
+                recipient: deps.api.addr_humanize(&item.creator)?.to_string(),
+                amount: priv_reward_amount,
+            })?,
+            funds: vec![],
+        }));
+
+        // Send to creator
+        msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
+            msg: to_binary(&Cw20ExecuteMsg::Transfer {
+                recipient: deps.api.addr_humanize(&recipient_address_raw)?.to_string(),
+                amount: priv_reward_amount,
+            })?,
+            funds: vec![],
+        }));
+
+        /*
+            TODO: Prepare msg to send payout to creator
+        */
+        if !net_amount_after.is_zero() {
+            msgs.push(CosmosMsg::Bank(BankMsg::Send {
+                to_address: deps.api.addr_humanize(&item.creator)?.to_string(),
+                amount: vec![deduct_tax(
+                    &deps.querier,
+                    Coin {
+                        denom: config.denom.clone(),
+                        amount: net_amount_after,
+                    },
+                )?],
+            }));
+        }
+
+        /*
+           TODO: Prepare msg send to lota
+        */
+        if !lota_fee_amount.is_zero() {
+            msgs.push(CosmosMsg::Bank(BankMsg::Send {
+                to_address: deps.api.addr_humanize(&config.lota_contract)?.to_string(),
+                amount: vec![deduct_tax(
+                    &deps.querier,
+                    Coin {
+                        denom: config.denom.clone(),
+                        amount: lota_fee_amount,
+                    },
+                )?],
+            }));
+        }
+    }
+
+    /*
+       TODO: Prepare msg to send charity if some charity
+    */
+    if let Some(address) = charity_address {
+        msgs.push(CosmosMsg::Bank(BankMsg::Send {
+            to_address: deps.api.addr_humanize(&address)?.to_string(),
+            amount: vec![deduct_tax(
+                &deps.querier,
+                Coin {
+                    denom: config.denom.clone(),
+                    amount: charity_amount,
+                },
+            )?],
+        }));
+    }
+
     let mut res = Response::new()
-        .add_message(msg_execute)
+        .add_messages(msgs)
         .add_attribute("auction_type", "NFT")
         .add_attribute("auction_id", auction_id.to_string())
         .add_attribute("sender", info.sender)
@@ -495,114 +572,6 @@ pub fn execute_withdraw_nft(
             deps.api.addr_humanize(&item.creator)?.to_string(),
         )
         .add_attribute("recipient", new_owner.to_string());
-
-    /*
-       TODO: Prepare msg to send rewards PRIV token
-    */
-    // Send to winner and creator if exist
-    if recipient_address_raw != item.creator {
-        let send_amount = Uint128::from(5_u128);
-        // Send to creator
-        let prepare_transfer_seller_token_msg = SubMsg {
-            id: 1,
-            msg: CosmosMsg::Wasm(WasmMsg::Execute {
-                contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
-                msg: to_binary(&Cw20ExecuteMsg::Transfer {
-                    recipient: deps.api.addr_humanize(&item.creator)?.to_string(),
-                    amount: send_amount,
-                })?,
-                funds: vec![],
-            }),
-            gas_limit: None,
-            reply_on: ReplyOn::Never,
-        };
-
-        res.messages.push(prepare_transfer_seller_token_msg);
-
-        // Send to winner
-        let submsg = SubMsg {
-            id: 2,
-            msg: CosmosMsg::Wasm(WasmMsg::Execute {
-                contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
-                msg: to_binary(&Cw20ExecuteMsg::Transfer {
-                    recipient: deps.api.addr_humanize(&recipient_address_raw)?.to_string(),
-                    amount: send_amount,
-                })?,
-                funds: vec![],
-            }),
-            gas_limit: None,
-            reply_on: ReplyOn::Never,
-        };
-        res.messages.push(submsg);
-
-        /*
-            TODO: Prepare msg to send payout discount charity
-        */
-        let prepare_msg = CosmosMsg::Bank(BankMsg::Send {
-            to_address: deps.api.addr_humanize(&item.creator)?.to_string(),
-            amount: vec![deduct_tax(
-                &deps.querier,
-                Coin {
-                    denom: config.denom.clone(),
-                    amount: net_amount_after,
-                },
-            )?],
-        });
-        let execute_msg = SubMsg {
-            id: 3,
-            msg: prepare_msg,
-            gas_limit: None,
-            reply_on: ReplyOn::Never,
-        };
-        res.messages.push(execute_msg);
-
-        /*
-           TODO: Prepare msg send to lota
-        */
-        let prepare_msg = CosmosMsg::Bank(BankMsg::Send {
-            to_address: deps.api.addr_humanize(&config.lota_contract)?.to_string(),
-            amount: vec![deduct_tax(
-                &deps.querier,
-                Coin {
-                    denom: config.denom.clone(),
-                    amount: lota_fee_amount,
-                },
-            )?],
-        });
-        let execute_msg = SubMsg {
-            id: 4,
-            msg: prepare_msg,
-            gas_limit: None,
-            reply_on: ReplyOn::Never,
-        };
-        res.messages.push(execute_msg);
-    }
-
-    /*
-       TODO: Prepare msg to send charity if some charity
-    */
-    match charity_address {
-        None => {}
-        Some(address) => {
-            let prepare_msg = CosmosMsg::Bank(BankMsg::Send {
-                to_address: deps.api.addr_humanize(&address)?.to_string(),
-                amount: vec![deduct_tax(
-                    &deps.querier,
-                    Coin {
-                        denom: config.denom.clone(),
-                        amount: charity_amount,
-                    },
-                )?],
-            });
-            let execute_msg = SubMsg {
-                id: 5,
-                msg: prepare_msg,
-                gas_limit: None,
-                reply_on: ReplyOn::Never,
-            };
-            res.messages.push(execute_msg);
-        }
-    }
 
     Ok(res)
 }
@@ -981,7 +950,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
 
         let res = execute(
             deps.as_mut(),
@@ -1007,7 +976,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
 
         let res = execute(
             deps.as_mut(),
@@ -1036,7 +1005,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
 
         let res = execute(
             deps.as_mut(),
@@ -1062,7 +1031,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
 
         let res = execute(
             deps.as_mut(),
@@ -1144,7 +1113,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
 
         let res = execute(
             deps.as_mut(),
@@ -1225,7 +1194,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
 
         let res = execute(
             deps.as_mut(),
@@ -1309,7 +1278,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
 
         let res = execute(
             deps.as_mut(),
@@ -1390,7 +1359,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
 
         let res = execute(
             deps.as_mut(),
@@ -1471,7 +1440,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
 
         let res = execute(
             deps.as_mut(),
@@ -1555,7 +1524,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
 
         let res = execute(
             deps.as_mut(),
@@ -1662,7 +1631,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
 
         let res = execute(
             deps.as_mut(),
@@ -1714,7 +1683,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
         let res = execute(
             deps.as_mut(),
             env.clone(),
@@ -1936,7 +1905,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
         let res = execute(
             deps.as_mut(),
             env.clone(),
@@ -1977,7 +1946,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
         let res = execute(
             deps.as_mut(),
             env.clone(),
@@ -2002,7 +1971,7 @@ mod tests {
         )
         .unwrap_err();
         // Success Alice private sale registered
-        let msg = ExecuteMsg::ReceiveCw20(Cw20ReceiveMsg {
+        let msg = ExecuteMsg::Receive(Cw20ReceiveMsg {
             sender: "alice".to_string(),
             amount: Uint128::from(10_000u128),
             msg: to_binary(&ReceiveMsg::RegisterPrivateSale { auction_id: 3 }).unwrap(),
@@ -2034,7 +2003,7 @@ mod tests {
         .unwrap_err();
 
         // ERROR Send less
-        let msg = ExecuteMsg::ReceiveCw20(Cw20ReceiveMsg {
+        let msg = ExecuteMsg::Receive(Cw20ReceiveMsg {
             sender: "bob".to_string(),
             amount: Uint128::from(5_000u128),
             msg: to_binary(&ReceiveMsg::RegisterPrivateSale { auction_id: 3 }).unwrap(),
@@ -2053,7 +2022,7 @@ mod tests {
         .unwrap_err();
 
         // ERROR Send more
-        let msg = ExecuteMsg::ReceiveCw20(Cw20ReceiveMsg {
+        let msg = ExecuteMsg::Receive(Cw20ReceiveMsg {
             sender: "bob".to_string(),
             amount: Uint128::from(5_000u128),
             msg: to_binary(&ReceiveMsg::RegisterPrivateSale { auction_id: 3 }).unwrap(),
@@ -2131,7 +2100,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
 
         let res = execute(
             deps.as_mut(),
@@ -2196,7 +2165,7 @@ mod tests {
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
 
         let res = execute(
             deps.as_mut(),
@@ -2276,16 +2245,58 @@ mod tests {
 
         assert_eq!(
             res.messages,
-            vec![SubMsg {
-                id: 0,
-                msg: CosmosMsg::Wasm(WasmMsg::Execute {
-                    contract_addr: "market".to_string(),
-                    msg: to_binary(&withdraw_msg).unwrap(),
-                    funds: vec![]
-                }),
-                gas_limit: None,
-                reply_on: ReplyOn::Never
-            }]
+            vec![
+                SubMsg {
+                    id: 0,
+                    msg: CosmosMsg::Wasm(WasmMsg::Execute {
+                        contract_addr: "market".to_string(),
+                        msg: to_binary(&withdraw_msg).unwrap(),
+                        funds: vec![]
+                    }),
+                    gas_limit: None,
+                    reply_on: ReplyOn::Never
+                },
+                SubMsg {
+                    id: 1,
+                    msg: CosmosMsg::Wasm(WasmMsg::Execute {
+                        contract_addr: "market".to_string(),
+                        msg: to_binary(&withdraw_msg).unwrap(),
+                        funds: vec![]
+                    }),
+                    gas_limit: None,
+                    reply_on: ReplyOn::Never
+                },
+                SubMsg {
+                    id: 2,
+                    msg: CosmosMsg::Wasm(WasmMsg::Execute {
+                        contract_addr: "market".to_string(),
+                        msg: to_binary(&withdraw_msg).unwrap(),
+                        funds: vec![]
+                    }),
+                    gas_limit: None,
+                    reply_on: ReplyOn::Never
+                },
+                SubMsg {
+                    id: 3,
+                    msg: CosmosMsg::Wasm(WasmMsg::Execute {
+                        contract_addr: "market".to_string(),
+                        msg: to_binary(&withdraw_msg).unwrap(),
+                        funds: vec![]
+                    }),
+                    gas_limit: None,
+                    reply_on: ReplyOn::Never
+                },
+                SubMsg {
+                    id: 4,
+                    msg: CosmosMsg::Wasm(WasmMsg::Execute {
+                        contract_addr: "market".to_string(),
+                        msg: to_binary(&withdraw_msg).unwrap(),
+                        funds: vec![]
+                    }),
+                    gas_limit: None,
+                    reply_on: ReplyOn::Never
+                }
+            ]
         );
         assert_eq!(
             res.attributes,
@@ -2347,7 +2358,7 @@ mod tests {
     //         token_id: "test".to_string(),
     //         msg: to_binary(&msg).unwrap(),
     //     };
-    //     let execute_msg = ExecuteMsg::ReceiveCw721(send_msg);
+    //     let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
     //     let res = execute(
     //         deps.as_mut(),
     //         env.clone(),
