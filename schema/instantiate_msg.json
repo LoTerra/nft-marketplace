@@ -6,11 +6,9 @@
     "bid_margin",
     "cw20_code_id",
     "cw20_label",
-    "cw20_msg",
-    "cw721_code_id",
-    "cw721_label",
-    "cw721_msg",
-    "denom"
+    "denom",
+    "lota_contract",
+    "lota_fee"
   ],
   "properties": {
     "bid_margin": {
@@ -26,28 +24,16 @@
     "cw20_label": {
       "type": "string"
     },
-    "cw20_msg": {
-      "$ref": "#/definitions/Binary"
-    },
-    "cw721_code_id": {
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0.0
-    },
-    "cw721_label": {
-      "type": "string"
-    },
-    "cw721_msg": {
-      "$ref": "#/definitions/Binary"
-    },
     "denom": {
       "type": "string"
-    }
-  },
-  "definitions": {
-    "Binary": {
-      "description": "Binary is a wrapper around Vec<u8> to add base64 de/serialization with serde. It also adds some helper methods to help encode inline.\n\nThis is only needed as serde-json-{core,wasm} has a horrible encoding for Vec<u8>",
+    },
+    "lota_contract": {
       "type": "string"
+    },
+    "lota_fee": {
+      "type": "integer",
+      "format": "uint8",
+      "minimum": 0.0
     }
   }
 }

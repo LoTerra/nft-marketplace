@@ -98,10 +98,10 @@
       "description": "This accepts a properly-encoded ReceiveMsg from a cw721 contract",
       "type": "object",
       "required": [
-        "receive_cw721"
+        "receive_nft"
       ],
       "properties": {
-        "receive_cw721": {
+        "receive_nft": {
           "$ref": "#/definitions/Cw721ReceiveMsg"
         }
       },
@@ -111,10 +111,10 @@
       "description": "This accepts a properly-encoded ReceiveMsg from a cw20 contract",
       "type": "object",
       "required": [
-        "receive_cw20"
+        "receive"
       ],
       "properties": {
-        "receive_cw20": {
+        "receive": {
           "$ref": "#/definitions/Cw20ReceiveMsg"
         }
       },

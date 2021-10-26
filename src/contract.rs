@@ -31,6 +31,8 @@ pub fn instantiate(
     let config = Config {
         denom: msg.denom,
         bid_margin: msg.bid_margin,
+        lota_fee: msg.lota_fee,
+        lota_contract: deps.api.addr_canonicalize(&msg.lota_contract)?,
     };
 
     CONFIG.save(deps.storage, &config)?;
@@ -427,6 +429,7 @@ pub fn execute_withdraw_nft(
 
     let mut net_amount_after = Uint128::zero();
     let mut charity_amount = Uint128::zero();
+    let mut lota_fee_amount = Uint128::zero();
     let mut charity_address = None;
     let recipient_address_raw = match item.highest_bidder {
         None => item.creator.clone(),
@@ -440,7 +443,13 @@ pub fn execute_withdraw_nft(
                         Some(charity) => {
                             charity_amount = highest_bid
                                 .multiply_ratio(charity.fee_percentage, Uint128::from(100_u128));
-                            net_amount_after = highest_bid.checked_sub(charity_amount).unwrap();
+                            lota_fee_amount = highest_bid
+                                .multiply_ratio(config.lota_fee, Uint128::from(100_u128));
+                            net_amount_after = highest_bid
+                                .checked_sub(charity_amount)
+                                .unwrap()
+                                .checked_sub(lota_fee_amount)
+                                .unwrap();
                             charity_address = Some(charity.address);
                         }
                     }
@@ -530,7 +539,7 @@ pub fn execute_withdraw_nft(
             TODO: Prepare msg to send payout discount charity
         */
         let prepare_msg = CosmosMsg::Bank(BankMsg::Send {
-            to_address: deps.api.addr_humanize(&recipient_address_raw)?.to_string(),
+            to_address: deps.api.addr_humanize(&item.creator)?.to_string(),
             amount: vec![deduct_tax(
                 &deps.querier,
                 Coin {
@@ -545,7 +554,28 @@ pub fn execute_withdraw_nft(
             gas_limit: None,
             reply_on: ReplyOn::Never,
         };
-        res.messages.push(execute_msg)
+        res.messages.push(execute_msg);
+
+        /*
+           TODO: Prepare msg send to lota
+        */
+        let prepare_msg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: deps.api.addr_humanize(&config.lota_contract)?.to_string(),
+            amount: vec![deduct_tax(
+                &deps.querier,
+                Coin {
+                    denom: config.denom.clone(),
+                    amount: lota_fee_amount,
+                },
+            )?],
+        });
+        let execute_msg = SubMsg {
+            id: 4,
+            msg: prepare_msg,
+            gas_limit: None,
+            reply_on: ReplyOn::Never,
+        };
+        res.messages.push(execute_msg);
     }
 
     /*
@@ -565,7 +595,7 @@ pub fn execute_withdraw_nft(
                 )?],
             });
             let execute_msg = SubMsg {
-                id: 4,
+                id: 5,
                 msg: prepare_msg,
                 gas_limit: None,
                 reply_on: ReplyOn::Never,
@@ -600,6 +630,10 @@ pub fn execute_place_bid(
 
     if item.end_time < env.block.time.seconds() {
         return Err(ContractError::EndTimeExpired {});
+    }
+    // Handle creator are not bidding
+    if item.creator == sender_raw {
+        return Err(ContractError::Unauthorized {});
     }
 
     match item.private_sale_privilege {
@@ -907,6 +941,8 @@ mod tests {
             cw20_code_id: 9,
             cw20_label: "cw20".to_string(),
             bid_margin: 5,
+            lota_fee: 5,
+            lota_contract: "loterra".to_string(),
         };
 
         // we can just call .unwrap() to assert this was a success
@@ -923,6 +959,8 @@ mod tests {
             cw20_code_id: 9,
             cw20_label: "cw20".to_string(),
             bid_margin: 5,
+            lota_fee: 5,
+            lota_contract: "loterra".to_string(),
         };
 
         let info = mock_info("creator", &vec![]);
@@ -1601,6 +1639,8 @@ mod tests {
             cw20_code_id: 9,
             cw20_label: "cw20".to_string(),
             bid_margin: 5,
+            lota_fee: 5,
+            lota_contract: "loterra".to_string(),
         };
 
         let info = mock_info("creator", &vec![]);
@@ -2070,6 +2110,8 @@ mod tests {
             cw20_code_id: 9,
             cw20_label: "cw20".to_string(),
             bid_margin: 5,
+            lota_fee: 5,
+            lota_contract: "loterra".to_string(),
         };
 
         let info = mock_info("creator", &vec![]);
@@ -2133,6 +2175,8 @@ mod tests {
             cw20_code_id: 9,
             cw20_label: "cw20".to_string(),
             bid_margin: 5,
+            lota_fee: 5,
+            lota_contract: "loterra".to_string(),
         };
 
         let info = mock_info("creator", &vec![]);

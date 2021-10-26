@@ -11,6 +11,8 @@ pub struct InstantiateMsg {
     pub cw20_code_id: u64,
     pub cw20_label: String,
     pub bid_margin: u8,
+    pub lota_fee: u8,
+    pub lota_contract: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]

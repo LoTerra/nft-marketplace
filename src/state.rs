@@ -9,6 +9,8 @@ use cw_storage_plus::{Item, Map};
 pub struct Config {
     pub denom: String,
     pub bid_margin: u8,
+    pub lota_fee: u8,
+    pub lota_contract: CanonicalAddr,
 }
 pub const CONFIG: Item<Config> = Item::new("config");
 
