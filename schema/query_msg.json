@@ -3,26 +3,51 @@
   "title": "QueryMsg",
   "oneOf": [
     {
+      "description": "Get auction by id",
       "type": "object",
       "required": [
-        "get_count"
+        "auction"
       ],
       "properties": {
-        "get_count": {
-          "type": "object"
+        "auction": {
+          "type": "object",
+          "required": [
+            "auction_id"
+          ],
+          "properties": {
+            "auction_id": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          }
         }
       },
       "additionalProperties": false
     },
     {
-      "description": "Get on sale NFT's",
+      "description": "Get bid info by auction id and address of the bidder",
       "type": "object",
       "required": [
-        "on_sale"
+        "bidder"
       ],
       "properties": {
-        "on_sale": {
-          "type": "object"
+        "bidder": {
+          "type": "object",
+          "required": [
+            "address",
+            "auction_id"
+          ],
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "auction_id": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          }
         }
       },
       "additionalProperties": false

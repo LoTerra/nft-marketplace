@@ -4,8 +4,7 @@
   "type": "object",
   "required": [
     "counter_items",
-    "cw20_address",
-    "cw721_address"
+    "cw20_address"
   ],
   "properties": {
     "counter_items": {
@@ -14,9 +13,6 @@
       "minimum": 0.0
     },
     "cw20_address": {
-      "$ref": "#/definitions/CanonicalAddr"
-    },
-    "cw721_address": {
       "$ref": "#/definitions/CanonicalAddr"
     }
   },

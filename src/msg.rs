@@ -9,11 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct InstantiateMsg {
     pub denom: String,
     pub cw20_code_id: u64,
-    pub cw20_msg: Binary,
     pub cw20_label: String,
-    pub cw721_code_id: u64,
-    pub cw721_msg: Binary,
-    pub cw721_label: String,
     pub bid_margin: u8,
 }
 
@@ -29,9 +25,9 @@ pub enum ExecuteMsg {
     /// Instant buy if allowed on the sale
     InstantBuy { auction_id: u64 },
     /// This accepts a properly-encoded ReceiveMsg from a cw721 contract
-    ReceiveCw721(Cw721ReceiveMsg),
+    ReceiveNft(Cw721ReceiveMsg),
     /// This accepts a properly-encoded ReceiveMsg from a cw20 contract
-    ReceiveCw20(Cw20ReceiveMsg),
+    Receive(Cw20ReceiveMsg),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]

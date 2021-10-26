@@ -61,6 +61,7 @@ pub struct BidInfo {
     pub bid_counter: u64,
     pub total_bid: Uint128,
     pub privilege_used: Option<Uint128>,
+    pub resolved: bool,
 }
 
 pub const BIDS: Map<(&[u8], &[u8]), BidInfo> = Map::new("bids");

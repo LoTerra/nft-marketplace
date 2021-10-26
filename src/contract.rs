@@ -43,10 +43,22 @@ pub fn instantiate(
     /*
        Instantiate a cw20, privilege using this cw20 like private sale...
     */
+    let msg_init = cw20_base::msg::InstantiateMsg {
+        name: "privilege".to_string(),
+        symbol: "PRIV".to_string(),
+        decimals: 6,
+        initial_balances: vec![],
+        mint: Some(cw20::MinterResponse {
+            minter: env.contract.address.to_string(),
+            cap: None,
+        }),
+        marketing: None,
+    };
+
     let cw20_msg = CosmosMsg::Wasm(WasmMsg::Instantiate {
         admin: Some(env.contract.address.to_string()),
         code_id: msg.cw20_code_id,
-        msg: msg.cw20_msg,
+        msg: to_binary(&msg_init)?,
         funds: vec![],
         label: msg.cw20_label,
     });
@@ -70,8 +82,8 @@ pub fn execute(
         ExecuteMsg::WithdrawNft { auction_id } => execute_withdraw_nft(deps, env, info, auction_id),
         ExecuteMsg::PlaceBid { auction_id } => execute_place_bid(deps, env, info, auction_id),
         ExecuteMsg::RetireBids { auction_id } => execute_retire_bids(deps, env, info, auction_id),
-        ExecuteMsg::ReceiveCw721(msg) => execute_receive_cw721(deps, env, info, msg),
-        ExecuteMsg::ReceiveCw20(msg) => execute_receive_cw20(deps, env, info, msg),
+        ExecuteMsg::ReceiveNft(msg) => execute_receive_cw721(deps, env, info, msg),
+        ExecuteMsg::Receive(msg) => execute_receive_cw20(deps, env, info, msg),
     }
 }
 
@@ -188,6 +200,7 @@ pub fn execute_register_private_sale(
             bid_counter: 0,
             total_bid: Uint128::zero(),
             privilege_used: Some(sent),
+            resolved: false,
         },
     )?;
 
@@ -350,6 +363,7 @@ pub fn execute_retire_bids(
         |bid| -> StdResult<_> {
             let mut update_bid = bid.unwrap();
             update_bid.total_bid = Uint128::zero();
+            update_bid.resolved = true;
             Ok(update_bid)
         },
     )?;
@@ -365,22 +379,29 @@ pub fn execute_retire_bids(
         )?],
     });
 
-    let privilege_msg = Cw20ExecuteMsg::Mint {
-        recipient: info.sender.to_string(),
-        amount: Uint128::from(1_u128),
-    };
-    let execute_privilege_msg = CosmosMsg::Wasm(WasmMsg::Execute {
-        contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
-        msg: to_binary(&privilege_msg)?,
-        funds: vec![],
-    });
-
-    let res = Response::new()
-        .add_message(execute_privilege_msg)
+    let mut res = Response::new()
         .add_message(bank_msg)
         .add_attribute("auction_id", auction_id.to_string())
         .add_attribute("refund_amount", bid.total_bid)
         .add_attribute("recipient", info.sender.to_string());
+
+    if !bid.resolved {
+        let privilege_msg = Cw20ExecuteMsg::Mint {
+            recipient: info.sender.to_string(),
+            amount: Uint128::from(1_u128),
+        };
+        let execute_privilege_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
+            msg: to_binary(&privilege_msg)?,
+            funds: vec![],
+        });
+        res.messages.push(SubMsg {
+            id: 1,
+            msg: execute_privilege_msg,
+            gas_limit: None,
+            reply_on: ReplyOn::Never,
+        });
+    }
 
     Ok(res)
 }
@@ -667,6 +688,7 @@ pub fn execute_place_bid(
                 bid_counter: 1,
                 total_bid: sent,
                 privilege_used: None,
+                resolved: false,
             },
         )?,
         Some(_) => {
@@ -883,11 +905,7 @@ mod tests {
         let msg = InstantiateMsg {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
-            cw20_msg: Default::default(),
             cw20_label: "cw20".to_string(),
-            cw721_code_id: 10,
-            cw721_msg: Default::default(),
-            cw721_label: "cw721".to_string(),
             bid_margin: 5,
         };
 
@@ -903,11 +921,7 @@ mod tests {
         let msg = InstantiateMsg {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
-            cw20_msg: Default::default(),
             cw20_label: "cw20".to_string(),
-            cw721_code_id: 10,
-            cw721_msg: Default::default(),
-            cw721_label: "cw721".to_string(),
             bid_margin: 5,
         };
 
@@ -1585,11 +1599,7 @@ mod tests {
         let msg = InstantiateMsg {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
-            cw20_msg: Default::default(),
             cw20_label: "cw20".to_string(),
-            cw721_code_id: 10,
-            cw721_msg: Default::default(),
-            cw721_label: "cw721".to_string(),
             bid_margin: 5,
         };
 
@@ -2058,11 +2068,7 @@ mod tests {
         let msg = InstantiateMsg {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
-            cw20_msg: Default::default(),
             cw20_label: "cw20".to_string(),
-            cw721_code_id: 10,
-            cw721_msg: Default::default(),
-            cw721_label: "cw721".to_string(),
             bid_margin: 5,
         };
 
@@ -2125,11 +2131,7 @@ mod tests {
         let msg = InstantiateMsg {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
-            cw20_msg: Default::default(),
             cw20_label: "cw20".to_string(),
-            cw721_code_id: 10,
-            cw721_msg: Default::default(),
-            cw721_label: "cw721".to_string(),
             bid_margin: 5,
         };
 

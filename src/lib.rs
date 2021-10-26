@@ -1,5 +1,6 @@
 pub mod contract;
 mod error;
+#[cfg(test)]
 mod mock_querier;
 pub mod msg;
 pub mod state;
