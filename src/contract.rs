@@ -469,26 +469,27 @@ pub fn execute_withdraw_nft(
     /*
        TODO: Prepare msg to send rewards PRIV token
     */
-    let send_amount = Uint128::from(5_u128);
-    // Send to creator
-    let prepare_transfer_seller_token_msg = SubMsg {
-        id: 1,
-        msg: CosmosMsg::Wasm(WasmMsg::Execute {
-            contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
-            msg: to_binary(&Cw20ExecuteMsg::Transfer {
-                recipient: deps.api.addr_humanize(&item.creator)?.to_string(),
-                amount: send_amount,
-            })?,
-            funds: vec![],
-        }),
-        gas_limit: None,
-        reply_on: ReplyOn::Never,
-    };
-
-    res.messages.push(prepare_transfer_seller_token_msg);
-
-    // Send to winner if exist
+    // Send to winner and creator if exist
     if recipient_address_raw != item.creator {
+        let send_amount = Uint128::from(5_u128);
+        // Send to creator
+        let prepare_transfer_seller_token_msg = SubMsg {
+            id: 1,
+            msg: CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
+                msg: to_binary(&Cw20ExecuteMsg::Transfer {
+                    recipient: deps.api.addr_humanize(&item.creator)?.to_string(),
+                    amount: send_amount,
+                })?,
+                funds: vec![],
+            }),
+            gas_limit: None,
+            reply_on: ReplyOn::Never,
+        };
+
+        res.messages.push(prepare_transfer_seller_token_msg);
+
+        // Send to winner
         let submsg = SubMsg {
             id: 2,
             msg: CosmosMsg::Wasm(WasmMsg::Execute {
@@ -521,7 +522,7 @@ pub fn execute_withdraw_nft(
             id: 3,
             msg: prepare_msg,
             gas_limit: None,
-            reply_on: ReplyOn::Always,
+            reply_on: ReplyOn::Never,
         };
         res.messages.push(execute_msg)
     }
@@ -546,7 +547,7 @@ pub fn execute_withdraw_nft(
                 id: 4,
                 msg: prepare_msg,
                 gas_limit: None,
-                reply_on: ReplyOn::Always,
+                reply_on: ReplyOn::Never,
             };
             res.messages.push(execute_msg);
         }
@@ -826,6 +827,7 @@ mod tests {
 
     use super::*;
     use crate::error::ContractError::MinBid;
+    use crate::mock_querier::mock_dependencies_custom;
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MOCK_CONTRACT_ADDR};
     use cosmwasm_std::{coins, from_binary, Api, Attribute, ReplyOn, StdError};
     use cw20::Cw20ExecuteMsg;
@@ -2076,7 +2078,7 @@ mod tests {
         /*
            Withdraw nft creator no bidders
         */
-        let mut deps = mock_dependencies(&coins(2, "token"));
+        let mut deps = mock_dependencies_custom(&coins(2, "token"));
 
         let msg = InstantiateMsg {
             denom: "uusd".to_string(),
