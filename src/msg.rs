@@ -1,5 +1,5 @@
-use crate::state::CharityInfo;
-use cosmwasm_std::{Binary, Coin, Uint128};
+use crate::state::{BidAmountTimeInfo, CharityInfo};
+use cosmwasm_std::{Addr, Binary, Coin, Uint128};
 use cw20::Cw20ReceiveMsg;
 use cw721::Cw721ReceiveMsg;
 use schemars::JsonSchema;
@@ -54,16 +54,37 @@ pub enum ReceiveMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryMsg {
-    // GetCount returns the current count as a json-encoded number
-    GetCount {},
-    /// Get on sale NFT's
-    OnSale {},
+    /// Get auction by id
+    auction { auction_id: u64 },
+    /// Get bid info by auction id and address of the bidder
+    bidder { auction_id: u64, address: String },
 }
 
 // We define a custom struct for each query response
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct CountResponse {
-    pub count: i32,
+pub struct AuctionResponse {
+    pub creator: String,
+    pub start_price: Option<Uint128>,
+    pub start_time: Option<u64>,
+    pub end_time: u64,
+    pub highest_bid: Option<Uint128>,
+    pub highest_bidder: Option<String>,
+    pub nft_contract: String,
+    pub nft_id: String,
+    pub total_bids: u64,
+    pub charity: Option<CharityInfo>,
+    pub instant_buy: Option<Uint128>,
+    pub reserve_price: Option<Uint128>,
+    pub private_sale_privilege: Option<Uint128>,
+    pub resolved: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct BidResponse {
+    pub bids: Vec<BidAmountTimeInfo>,
+    pub bid_counter: u64,
+    pub total_bid: Uint128,
+    pub privilege_used: Option<Uint128>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]

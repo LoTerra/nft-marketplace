@@ -9,7 +9,7 @@ use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
 
 use crate::error::ContractError;
 use crate::msg::{
-    CharityResponse, CountResponse, ExecuteMsg, InstantiateMsg, QueryMsg, ReceiveMsg,
+    AuctionResponse, BidResponse, CharityResponse, ExecuteMsg, InstantiateMsg, QueryMsg, ReceiveMsg,
 };
 use crate::state::{
     BidAmountTimeInfo, BidInfo, CharityInfo, Config, ItemInfo, State, BIDS, CONFIG, ITEMS, STATE,
@@ -808,17 +808,59 @@ pub fn cw20_instance_reply(
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::GetCount {} => to_binary(&query_count(deps)?),
-        QueryMsg::OnSale {} => to_binary(&query_count(deps)?),
+        QueryMsg::auction { auction_id } => to_binary(&query_auction(deps, env, auction_id)?),
+        QueryMsg::bidder {
+            auction_id,
+            address,
+        } => to_binary(&query_bidder(deps, env, auction_id, address)?),
     }
 }
 
-fn query_count(deps: Deps) -> StdResult<CountResponse> {
-    let state = STATE.load(deps.storage)?;
-    Ok(CountResponse {
-        count: state.counter_items as i32,
+fn query_auction(deps: Deps, _env: Env, auction_id: u64) -> StdResult<AuctionResponse> {
+    let item = match ITEMS.may_load(deps.storage, &auction_id.to_be_bytes())? {
+        None => Err(StdError::generic_err("Not found")),
+        Some(item) => Ok(item),
+    }?;
+    let highest_bidder = match item.highest_bidder {
+        None => None,
+        Some(highest_bidder) => Some(deps.api.addr_humanize(&highest_bidder)?.to_string()),
+    };
+
+    Ok(AuctionResponse {
+        creator: deps.api.addr_humanize(&item.creator)?.to_string(),
+        start_price: item.start_price,
+        start_time: item.start_time,
+        end_time: item.end_time,
+        highest_bid: item.highest_bid,
+        highest_bidder,
+        nft_contract: deps.api.addr_humanize(&item.nft_contract)?.to_string(),
+        nft_id: item.nft_id,
+        total_bids: item.total_bids,
+        charity: item.charity,
+        instant_buy: item.instant_buy,
+        reserve_price: item.reserve_price,
+        private_sale_privilege: item.private_sale_privilege,
+        resolved: item.resolved,
+    })
+}
+fn query_bidder(deps: Deps, _env: Env, auction_id: u64, address: String) -> StdResult<BidResponse> {
+    let bid = match BIDS.may_load(
+        deps.storage,
+        (
+            &auction_id.to_be_bytes(),
+            deps.api.addr_canonicalize(&address)?.as_slice(),
+        ),
+    )? {
+        None => Err(StdError::generic_err("Not found")),
+        Some(bid) => Ok(bid),
+    }?;
+    Ok(BidResponse {
+        bids: bid.bids,
+        bid_counter: bid.bid_counter,
+        total_bid: bid.total_bid,
+        privilege_used: bid.privilege_used,
     })
 }
 
