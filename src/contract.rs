@@ -383,12 +383,6 @@ pub fn execute_retire_bids(
     });
     let mut msgs = vec![bank_msg];
 
-    let mut res = Response::new()
-        .add_messages(msgs)
-        .add_attribute("auction_id", auction_id.to_string())
-        .add_attribute("refund_amount", bid.total_bid)
-        .add_attribute("recipient", info.sender.to_string());
-
     if !bid.resolved {
         let privilege_msg = Cw20ExecuteMsg::Mint {
             recipient: info.sender.to_string(),
@@ -401,6 +395,12 @@ pub fn execute_retire_bids(
         });
         msgs.push(execute_privilege_msg);
     }
+
+    let mut res = Response::new()
+        .add_messages(msgs)
+        .add_attribute("auction_id", auction_id.to_string())
+        .add_attribute("refund_amount", bid.total_bid)
+        .add_attribute("recipient", info.sender.to_string());
 
     Ok(res)
 }
