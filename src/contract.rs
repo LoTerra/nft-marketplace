@@ -730,7 +730,13 @@ pub fn execute_instant_buy(
     if env.block.time.seconds() > item.end_time {
         return Err(ContractError::EndTimeExpired {});
     }
+
     let sender_raw = deps.api.addr_canonicalize(&info.sender.as_str())?;
+
+    // Handle creator are not bidding
+    if item.creator == sender_raw {
+        return Err(ContractError::Unauthorized {});
+    }
 
     match item.private_sale_privilege {
         None => {}
