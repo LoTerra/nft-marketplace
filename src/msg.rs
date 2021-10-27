@@ -1,5 +1,5 @@
-use crate::state::{BidAmountTimeInfo, CharityInfo};
-use cosmwasm_std::{Addr, Binary, Coin, Uint128};
+use crate::state::BidAmountTimeInfo;
+use cosmwasm_std::Uint128;
 use cw20::Cw20ReceiveMsg;
 use cw721::Cw721ReceiveMsg;
 use schemars::JsonSchema;
