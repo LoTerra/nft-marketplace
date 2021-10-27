@@ -14,7 +14,7 @@
     "charity": {
       "anyOf": [
         {
-          "$ref": "#/definitions/CharityInfo"
+          "$ref": "#/definitions/CharityResponse"
         },
         {
           "type": "null"
@@ -109,14 +109,7 @@
     }
   },
   "definitions": {
-    "Binary": {
-      "description": "Binary is a wrapper around Vec<u8> to add base64 de/serialization with serde. It also adds some helper methods to help encode inline.\n\nThis is only needed as serde-json-{core,wasm} has a horrible encoding for Vec<u8>",
-      "type": "string"
-    },
-    "CanonicalAddr": {
-      "$ref": "#/definitions/Binary"
-    },
-    "CharityInfo": {
+    "CharityResponse": {
       "type": "object",
       "required": [
         "address",
@@ -124,7 +117,7 @@
       ],
       "properties": {
         "address": {
-          "$ref": "#/definitions/CanonicalAddr"
+          "type": "string"
         },
         "fee_percentage": {
           "type": "integer",

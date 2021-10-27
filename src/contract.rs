@@ -10,7 +10,8 @@ use std::borrow::Borrow;
 
 use crate::error::ContractError;
 use crate::msg::{
-    AuctionResponse, BidResponse, CharityResponse, ExecuteMsg, InstantiateMsg, QueryMsg, ReceiveMsg,
+    AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg, InstantiateMsg,
+    QueryMsg, ReceiveMsg, StateResponse,
 };
 use crate::state::{
     BidAmountTimeInfo, BidInfo, CharityInfo, Config, ItemInfo, State, BIDS, CONFIG, ITEMS, STATE,
@@ -435,14 +436,11 @@ pub fn execute_withdraw_nft(
             Some(reserve_price) => match item.highest_bid {
                 None => item.creator.clone(),
                 Some(highest_bid) => {
-                    match item.charity {
-                        None => {}
-                        Some(charity) => {
-                            charity_amount = highest_bid
-                                .multiply_ratio(charity.fee_percentage, Uint128::from(100_u128));
-                            net_amount_after = highest_bid.checked_sub(charity_amount).unwrap();
-                            charity_address = Some(charity.address);
-                        }
+                    if let Some(charity) = item.charity {
+                        charity_amount = highest_bid
+                            .multiply_ratio(charity.fee_percentage, Uint128::from(100_u128));
+                        net_amount_after = highest_bid.checked_sub(charity_amount).unwrap();
+                        charity_address = Some(charity.address);
                     }
                     if reserve_price > highest_bid {
                         item.creator.clone();
@@ -837,12 +835,31 @@ pub fn cw20_instance_reply(
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::auction { auction_id } => to_binary(&query_auction(deps, env, auction_id)?),
-        QueryMsg::bidder {
+        QueryMsg::Auction { auction_id } => to_binary(&query_auction(deps, env, auction_id)?),
+        QueryMsg::Bidder {
             auction_id,
             address,
         } => to_binary(&query_bidder(deps, env, auction_id, address)?),
+        QueryMsg::Config {} => to_binary(&query_config(deps, env)?),
+        QueryMsg::State {} => to_binary(&query_state(deps, env)?),
     }
+}
+fn query_config(deps: Deps, _env: Env) -> StdResult<ConfigResponse> {
+    let config = CONFIG.load(deps.storage)?;
+    Ok(ConfigResponse {
+        denom: config.denom,
+        bid_margin: config.bid_margin,
+        lota_fee: config.lota_fee,
+        lota_contract: deps.api.addr_humanize(&config.lota_contract)?.to_string(),
+    })
+}
+
+fn query_state(deps: Deps, _env: Env) -> StdResult<StateResponse> {
+    let state = STATE.load(deps.storage)?;
+    Ok(StateResponse {
+        counter_items: state.counter_items,
+        cw20_address: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
+    })
 }
 
 fn query_auction(deps: Deps, _env: Env, auction_id: u64) -> StdResult<AuctionResponse> {

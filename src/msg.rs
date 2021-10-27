@@ -53,9 +53,13 @@ pub enum ReceiveMsg {
 #[serde(rename_all = "snake_case")]
 pub enum QueryMsg {
     /// Get auction by id
-    auction { auction_id: u64 },
+    Auction { auction_id: u64 },
     /// Get bid info by auction id and address of the bidder
-    bidder { auction_id: u64, address: String },
+    Bidder { auction_id: u64, address: String },
+    /// Get config
+    Config {},
+    /// Get state
+    State {},
 }
 
 // We define a custom struct for each query response
@@ -89,4 +93,18 @@ pub struct BidResponse {
 pub struct CharityResponse {
     pub address: String,
     pub fee_percentage: u8,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct ConfigResponse {
+    pub denom: String,
+    pub bid_margin: u8,
+    pub lota_fee: u8,
+    pub lota_contract: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct StateResponse {
+    pub counter_items: u64,
+    pub cw20_address: String,
 }

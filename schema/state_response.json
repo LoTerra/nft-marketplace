@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StateResponse",
+  "type": "object",
+  "required": [
+    "counter_items",
+    "cw20_address"
+  ],
+  "properties": {
+    "counter_items": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "cw20_address": {
+      "type": "string"
+    }
+  }
+}
