@@ -490,7 +490,7 @@ pub fn execute_withdraw_nft(
         // Send to creator
         msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
-            msg: to_binary(&Cw20ExecuteMsg::Transfer {
+            msg: to_binary(&Cw20ExecuteMsg::Mint {
                 recipient: deps.api.addr_humanize(&item.creator)?.to_string(),
                 amount: priv_reward_amount,
             })?,
@@ -500,7 +500,7 @@ pub fn execute_withdraw_nft(
         // Send to creator
         msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
-            msg: to_binary(&Cw20ExecuteMsg::Transfer {
+            msg: to_binary(&Cw20ExecuteMsg::Mint {
                 recipient: deps.api.addr_humanize(&recipient_address_raw)?.to_string(),
                 amount: priv_reward_amount,
             })?,
