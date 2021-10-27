@@ -849,6 +849,14 @@ fn query_auction(deps: Deps, _env: Env, auction_id: u64) -> StdResult<AuctionRes
         Some(highest_bidder) => Some(deps.api.addr_humanize(&highest_bidder)?.to_string()),
     };
 
+    let charity = match item.charity {
+        None => None,
+        Some(charity) => Some(CharityResponse {
+            address: deps.api.addr_humanize(&charity.address)?.to_string(),
+            fee_percentage: charity.fee_percentage,
+        }),
+    };
+
     Ok(AuctionResponse {
         creator: deps.api.addr_humanize(&item.creator)?.to_string(),
         start_price: item.start_price,
@@ -859,7 +867,7 @@ fn query_auction(deps: Deps, _env: Env, auction_id: u64) -> StdResult<AuctionRes
         nft_contract: deps.api.addr_humanize(&item.nft_contract)?.to_string(),
         nft_id: item.nft_id,
         total_bids: item.total_bids,
-        charity: item.charity,
+        charity,
         instant_buy: item.instant_buy,
         reserve_price: item.reserve_price,
         private_sale_privilege: item.private_sale_privilege,

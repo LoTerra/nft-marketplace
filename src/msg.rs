@@ -70,7 +70,7 @@ pub struct AuctionResponse {
     pub nft_contract: String,
     pub nft_id: String,
     pub total_bids: u64,
-    pub charity: Option<CharityInfo>,
+    pub charity: Option<CharityResponse>,
     pub instant_buy: Option<Uint128>,
     pub reserve_price: Option<Uint128>,
     pub private_sale_privilege: Option<Uint128>,
