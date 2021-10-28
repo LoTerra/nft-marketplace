@@ -27,8 +27,8 @@ pub enum ContractError {
     #[error("Multiple denom not allowed")]
     MultipleDenoms {},
 
-    #[error("Inaccurate funds for instant buying")]
-    InaccurateFunds {},
+    #[error("Inaccurate funds for instant buying price is {0} your total bids is {1} ")]
+    InaccurateFunds(Uint128, Uint128),
 
     #[error("Min bid amount is {0}, your total sent with this current amount is {1}")]
     MinBid(Uint128, Uint128),

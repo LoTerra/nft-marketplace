@@ -67,6 +67,28 @@ pub struct BidInfo {
 
 pub const BIDS: Map<(&[u8], &[u8]), BidInfo> = Map::new("bids");
 
+/*
+  Bids stats
+*/
+
+// #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+// pub struct HistoryBidInfo {
+//     pub bidder: CanonicalAddr,
+//     pub amount: Uint128,
+//     pub time: u64,
+// }
+//
+// #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+// pub struct HistoryInfo {
+//     pub bids: Vec<HistoryBidInfo>,
+// }
+//
+// pub const Histories: Map<&[u8], HistoryInfo> = Map::new("histories");
+
+/*
+  User bid stats
+*/
+
 // #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 // pub struct UserInfo {
 //     pub bidding_stats: u64,

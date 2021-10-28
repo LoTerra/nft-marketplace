@@ -245,11 +245,25 @@ pub fn execute_create_auction(
     if env.block.time.seconds() > end_time.checked_add(MIN_TIME_AUCTION).unwrap() {
         return Err(ContractError::EndTimeExpired {});
     }
-    match start_time {
-        None => {}
-        Some(time) => {
-            if time <= end_time.checked_add(MIN_TIME_AUCTION).unwrap() {
-                return Err(ContractError::EndTimeExpired {});
+
+    if let Some(time) = start_time {
+        if time <= end_time.checked_add(MIN_TIME_AUCTION).unwrap() {
+            return Err(ContractError::EndTimeExpired {});
+        }
+    }
+
+    /*
+       check if start_price is less than reserve_price and instant_buy
+    */
+    if let Some(start_price_amount) = start_price {
+        if let Some(instant_buy_amount) = instant_buy {
+            if start_price_amount >= instant_buy_amount {
+                return Err(ContractError::Unauthorized {});
+            }
+        }
+        if let Some(reserve_price_amount) = reserve_price {
+            if start_price_amount > reserve_price_amount {
+                return Err(ContractError::Unauthorized {});
             }
         }
     }
@@ -273,11 +287,16 @@ pub fn execute_create_auction(
     // Validate instant buy
     let instant_buy_price = match instant_buy {
         None => None,
-        Some(price) => {
-            if price.is_zero() {
+        Some(instant_buy_price) => {
+            if instant_buy_price.is_zero() {
                 return Err(ContractError::ZeroNotValid {});
             }
-            Some(price)
+            if let Some(reserve_price_amount) = reserve_price {
+                if instant_buy_price < reserve_price_amount {
+                    return Err(ContractError::Unauthorized {});
+                }
+            }
+            Some(instant_buy_price)
         }
     };
 
@@ -435,12 +454,6 @@ pub fn execute_withdraw_nft(
             Some(reserve_price) => match item.highest_bid {
                 None => item.creator.clone(),
                 Some(highest_bid) => {
-                    if let Some(charity) = item.charity {
-                        charity_amount = highest_bid
-                            .multiply_ratio(charity.fee_percentage, Uint128::from(100_u128));
-                        net_amount_after = highest_bid.checked_sub(charity_amount).unwrap();
-                        charity_address = Some(charity.address);
-                    }
                     if reserve_price > highest_bid {
                         item.creator.clone()
                     } else {
@@ -452,8 +465,15 @@ pub fn execute_withdraw_nft(
     };
 
     if let Some(highest_bid) = item.highest_bid {
-        lota_fee_amount = highest_bid.multiply_ratio(config.lota_fee, Uint128::from(100_u128));
-        net_amount_after = highest_bid.checked_sub(lota_fee_amount).unwrap();
+        net_amount_after = highest_bid;
+        lota_fee_amount = net_amount_after.multiply_ratio(config.lota_fee, Uint128::from(100_u128));
+        net_amount_after = net_amount_after.checked_sub(lota_fee_amount).unwrap();
+        if let Some(charity) = item.charity {
+            charity_amount =
+                net_amount_after.multiply_ratio(charity.fee_percentage, Uint128::from(100_u128));
+            net_amount_after = net_amount_after.checked_sub(charity_amount).unwrap();
+            charity_address = Some(charity.address);
+        }
     }
 
     ITEMS.update(
@@ -720,6 +740,10 @@ pub fn execute_instant_buy(
     info: MessageInfo,
     auction_id: u64,
 ) -> Result<Response, ContractError> {
+    /*
+       TODO: Subtract already bids from the instant buy amount
+    */
+
     let config = CONFIG.load(deps.storage)?;
     let item = match ITEMS.may_load(deps.storage, &auction_id.to_be_bytes())? {
         None => Err(ContractError::Unauthorized {}),
@@ -757,11 +781,56 @@ pub fn execute_instant_buy(
         _ => Err(ContractError::MultipleDenoms {}),
     }?;
 
+    match BIDS.may_load(
+        deps.storage,
+        (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+    )? {
+        None => BIDS.save(
+            deps.storage,
+            (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+            &BidInfo {
+                bids: vec![BidAmountTimeInfo {
+                    amount: sent,
+                    time: env.block.time.seconds(),
+                }],
+                bid_counter: 1,
+                total_bid: sent,
+                privilege_used: None,
+                resolved: false,
+            },
+        )?,
+        Some(_) => {
+            BIDS.update(
+                deps.storage,
+                (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+                |bid| -> StdResult<_> {
+                    let mut updated_bid = bid.unwrap();
+                    updated_bid.bid_counter += 1;
+                    updated_bid.total_bid = updated_bid.total_bid.checked_add(sent)?;
+                    updated_bid.bids.push(BidAmountTimeInfo {
+                        amount: sent,
+                        time: env.block.time.seconds(),
+                    });
+
+                    Ok(updated_bid)
+                },
+            )?;
+        }
+    }
+
+    let bid_total_amount = BIDS.load(
+        deps.storage,
+        (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+    )?;
+
     let instant_buy_amount = match item.instant_buy {
         None => Err(ContractError::Unauthorized {}),
         Some(amount) => {
-            if amount != sent {
-                return Err(ContractError::InaccurateFunds {});
+            if amount != bid_total_amount.total_bid {
+                return Err(ContractError::InaccurateFunds(
+                    amount,
+                    bid_total_amount.total_bid,
+                ));
             }
             Ok(amount)
         }
