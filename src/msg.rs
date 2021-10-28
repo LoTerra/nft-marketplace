@@ -56,6 +56,8 @@ pub enum QueryMsg {
     Auction { auction_id: u64 },
     /// Get bid info by auction id and address of the bidder
     Bidder { auction_id: u64, address: String },
+    /// Get bids history from an auction id
+    Bids { auction_id: u64 },
     /// Get config
     Config {},
     /// Get state
@@ -107,4 +109,17 @@ pub struct ConfigResponse {
 pub struct StateResponse {
     pub counter_items: u64,
     pub cw20_address: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct HistoryBidResponse {
+    pub bidder: String,
+    pub amount: Uint128,
+    pub time: u64,
+    pub instant_buy: bool
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct HistoryResponse {
+    pub bids: Vec<HistoryBidResponse>,
 }
