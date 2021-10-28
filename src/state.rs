@@ -76,7 +76,7 @@ pub struct HistoryBidInfo {
     pub bidder: CanonicalAddr,
     pub amount: Uint128,
     pub time: u64,
-    pub instant_buy: bool
+    pub instant_buy: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]

@@ -8,8 +8,14 @@ use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
 
 use crate::error::ContractError;
-use crate::msg::{AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg, HistoryBidResponse, HistoryResponse, InstantiateMsg, QueryMsg, ReceiveMsg, StateResponse};
-use crate::state::{BidAmountTimeInfo, BidInfo, CharityInfo, Config, ItemInfo, State, BIDS, CONFIG, ITEMS, STATE, HISTORIES, HistoryInfo, HistoryBidInfo};
+use crate::msg::{
+    AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg, HistoryBidResponse,
+    HistoryResponse, InstantiateMsg, QueryMsg, ReceiveMsg, StateResponse,
+};
+use crate::state::{
+    BidAmountTimeInfo, BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, State,
+    BIDS, CONFIG, HISTORIES, ITEMS, STATE,
+};
 use crate::taxation::deduct_tax;
 
 // version info for migration info
@@ -360,12 +366,9 @@ pub fn execute_retire_bids(
     )?;
 
     // Check if the highest bidder is the sender
-    match item.highest_bidder {
-        None => {}
-        Some(highest_bidder) => {
-            if highest_bidder == sender_raw {
-                return Err(ContractError::Unauthorized {});
-            }
+    if let Some(highest_bidder) = item.highest_bidder {
+        if highest_bidder == sender_raw {
+            return Err(ContractError::Unauthorized {});
         }
     }
 
@@ -724,27 +727,30 @@ pub fn execute_place_bid(
         }
     }
 
-    match HISTORIES.may_load(
-        deps.storage,
-        &auction_id.to_be_bytes(),
-    )? {
-        None => HISTORIES.save(deps.storage, &auction_id.to_be_bytes(), &HistoryInfo { bids: vec![HistoryBidInfo{
-            bidder: sender_raw,
-            amount: sent,
-            time: env.block.time.seconds(),
-            instant_buy: false
-        }]})?,
+    match HISTORIES.may_load(deps.storage, &auction_id.to_be_bytes())? {
+        None => HISTORIES.save(
+            deps.storage,
+            &auction_id.to_be_bytes(),
+            &HistoryInfo {
+                bids: vec![HistoryBidInfo {
+                    bidder: sender_raw,
+                    amount: sent,
+                    time: env.block.time.seconds(),
+                    instant_buy: false,
+                }],
+            },
+        )?,
         Some(_) => {
             HISTORIES.update(
                 deps.storage,
                 &auction_id.to_be_bytes(),
                 |hist| -> StdResult<_> {
                     let mut updated_hist = hist.unwrap();
-                    updated_hist.bids.push(HistoryBidInfo{
+                    updated_hist.bids.push(HistoryBidInfo {
                         bidder: sender_raw,
                         amount: sent,
                         time: env.block.time.seconds(),
-                        instant_buy: false
+                        instant_buy: false,
                     });
                     Ok(updated_hist)
                 },
@@ -875,34 +881,36 @@ pub fn execute_instant_buy(
         },
     )?;
 
-    match HISTORIES.may_load(
-        deps.storage,
-        &auction_id.to_be_bytes(),
-    )? {
-        None => HISTORIES.save(deps.storage, &auction_id.to_be_bytes(), &HistoryInfo { bids: vec![HistoryBidInfo{
-            bidder: sender_raw,
-            amount: sent,
-            time: env.block.time.seconds(),
-            instant_buy: true
-        }]})?,
+    match HISTORIES.may_load(deps.storage, &auction_id.to_be_bytes())? {
+        None => HISTORIES.save(
+            deps.storage,
+            &auction_id.to_be_bytes(),
+            &HistoryInfo {
+                bids: vec![HistoryBidInfo {
+                    bidder: sender_raw,
+                    amount: sent,
+                    time: env.block.time.seconds(),
+                    instant_buy: true,
+                }],
+            },
+        )?,
         Some(_) => {
             HISTORIES.update(
                 deps.storage,
                 &auction_id.to_be_bytes(),
                 |hist| -> StdResult<_> {
                     let mut updated_hist = hist.unwrap();
-                    updated_hist.bids.push(HistoryBidInfo{
+                    updated_hist.bids.push(HistoryBidInfo {
                         bidder: sender_raw,
                         amount: sent,
                         time: env.block.time.seconds(),
-                        instant_buy: true
+                        instant_buy: true,
                     });
                     Ok(updated_hist)
                 },
             )?;
         }
     }
-
 
     let res = Response::new().add_attribute("create_auction_type", "NFT");
     Ok(res)
@@ -963,16 +971,18 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 
 fn query_bids(deps: Deps, _env: Env, auction_id: u64) -> StdResult<HistoryResponse> {
     let history = HISTORIES.load(deps.storage, &auction_id.to_be_bytes())?;
-    let hist = history.bids.into_iter().map(|hist|{
-        HistoryBidResponse{
+    let hist = history
+        .bids
+        .into_iter()
+        .map(|hist| HistoryBidResponse {
             bidder: deps.api.addr_humanize(&hist.bidder).unwrap().to_string(),
             amount: hist.amount,
             time: hist.time,
-            instant_buy: hist.instant_buy
-        }
-    }).collect::<Vec<HistoryBidResponse>>();
+            instant_buy: hist.instant_buy,
+        })
+        .collect::<Vec<HistoryBidResponse>>();
 
-    Ok(HistoryResponse{ bids: hist })
+    Ok(HistoryResponse { bids: hist })
 }
 
 fn query_config(deps: Deps, _env: Env) -> StdResult<ConfigResponse> {
