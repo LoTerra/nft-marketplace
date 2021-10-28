@@ -564,16 +564,18 @@ pub fn execute_withdraw_nft(
        TODO: Prepare msg to send charity if some charity
     */
     if let Some(address) = charity_address {
-        msgs.push(CosmosMsg::Bank(BankMsg::Send {
-            to_address: deps.api.addr_humanize(&address)?.to_string(),
-            amount: vec![deduct_tax(
-                &deps.querier,
-                Coin {
-                    denom: config.denom.clone(),
-                    amount: charity_amount,
-                },
-            )?],
-        }));
+        if !charity_amount.is_zero() {
+            msgs.push(CosmosMsg::Bank(BankMsg::Send {
+                to_address: deps.api.addr_humanize(&address)?.to_string(),
+                amount: vec![deduct_tax(
+                    &deps.querier,
+                    Coin {
+                        denom: config.denom.clone(),
+                        amount: charity_amount,
+                    },
+                )?],
+            }));
+        }
     }
 
     let res = Response::new()
