@@ -9,11 +9,12 @@ use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
 
 use crate::error::ContractError;
 use crate::msg::{
-    AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg, InstantiateMsg,
-    QueryMsg, ReceiveMsg, StateResponse,
+    AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg, HistoryBidResponse,
+    HistoryResponse, InstantiateMsg, QueryMsg, ReceiveMsg, StateResponse,
 };
 use crate::state::{
-    BidAmountTimeInfo, BidInfo, CharityInfo, Config, ItemInfo, State, BIDS, CONFIG, ITEMS, STATE,
+    BidAmountTimeInfo, BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, State,
+    BIDS, CONFIG, HISTORIES, ITEMS, STATE,
 };
 use crate::taxation::deduct_tax;
 
@@ -365,12 +366,9 @@ pub fn execute_retire_bids(
     )?;
 
     // Check if the highest bidder is the sender
-    match item.highest_bidder {
-        None => {}
-        Some(highest_bidder) => {
-            if highest_bidder == sender_raw {
-                return Err(ContractError::Unauthorized {});
-            }
+    if let Some(highest_bidder) = item.highest_bidder {
+        if highest_bidder == sender_raw {
+            return Err(ContractError::Unauthorized {});
         }
     }
 
@@ -501,7 +499,7 @@ pub fn execute_withdraw_nft(
 
     let mut msgs = vec![msg_execute];
     /*
-       TODO: Prepare msg to send rewards PRIV token
+       Prepare msg to send rewards PRIV token
     */
     // Send to winner and creator if exist
     if recipient_address_raw != item.creator {
@@ -528,7 +526,7 @@ pub fn execute_withdraw_nft(
         }));
 
         /*
-            TODO: Prepare msg to send payout to creator
+            Prepare msg to send payout to creator
         */
         if !net_amount_after.is_zero() {
             msgs.push(CosmosMsg::Bank(BankMsg::Send {
@@ -544,7 +542,7 @@ pub fn execute_withdraw_nft(
         }
 
         /*
-           TODO: Prepare msg send to lota
+           Prepare msg send to lota
         */
         if !lota_fee_amount.is_zero() {
             msgs.push(CosmosMsg::Bank(BankMsg::Send {
@@ -561,7 +559,7 @@ pub fn execute_withdraw_nft(
     }
 
     /*
-       TODO: Prepare msg to send charity if some charity
+       Prepare msg to send charity if some charity
     */
     if let Some(address) = charity_address {
         if !charity_amount.is_zero() {
@@ -729,6 +727,37 @@ pub fn execute_place_bid(
         }
     }
 
+    match HISTORIES.may_load(deps.storage, &auction_id.to_be_bytes())? {
+        None => HISTORIES.save(
+            deps.storage,
+            &auction_id.to_be_bytes(),
+            &HistoryInfo {
+                bids: vec![HistoryBidInfo {
+                    bidder: sender_raw,
+                    amount: sent,
+                    time: env.block.time.seconds(),
+                    instant_buy: false,
+                }],
+            },
+        )?,
+        Some(_) => {
+            HISTORIES.update(
+                deps.storage,
+                &auction_id.to_be_bytes(),
+                |hist| -> StdResult<_> {
+                    let mut updated_hist = hist.unwrap();
+                    updated_hist.bids.push(HistoryBidInfo {
+                        bidder: sender_raw,
+                        amount: sent,
+                        time: env.block.time.seconds(),
+                        instant_buy: false,
+                    });
+                    Ok(updated_hist)
+                },
+            )?;
+        }
+    }
+
     let res = Response::new()
         .add_attribute("new_bid", sent.to_string())
         .add_attribute("sender", info.sender.to_string())
@@ -845,14 +874,48 @@ pub fn execute_instant_buy(
             let mut updated_item = item.unwrap();
             updated_item.end_time = env.block.time.minus_seconds(MIN_TIME_AUCTION).seconds();
             updated_item.highest_bid = Some(instant_buy_amount);
-            updated_item.highest_bidder = Some(sender_raw);
+            updated_item.highest_bidder = Some(sender_raw.clone());
             updated_item.total_bids += 1;
 
             Ok(updated_item)
         },
     )?;
 
-    let res = Response::new().add_attribute("create_auction_type", "NFT");
+    match HISTORIES.may_load(deps.storage, &auction_id.to_be_bytes())? {
+        None => HISTORIES.save(
+            deps.storage,
+            &auction_id.to_be_bytes(),
+            &HistoryInfo {
+                bids: vec![HistoryBidInfo {
+                    bidder: sender_raw,
+                    amount: sent,
+                    time: env.block.time.seconds(),
+                    instant_buy: true,
+                }],
+            },
+        )?,
+        Some(_) => {
+            HISTORIES.update(
+                deps.storage,
+                &auction_id.to_be_bytes(),
+                |hist| -> StdResult<_> {
+                    let mut updated_hist = hist.unwrap();
+                    updated_hist.bids.push(HistoryBidInfo {
+                        bidder: sender_raw,
+                        amount: sent,
+                        time: env.block.time.seconds(),
+                        instant_buy: true,
+                    });
+                    Ok(updated_hist)
+                },
+            )?;
+        }
+    }
+
+    let res = Response::new()
+        .add_attribute("instant_buy", "NFT")
+        .add_attribute("nft_id", item.nft_id)
+        .add_attribute("auction_id", auction_id.to_string());
     Ok(res)
 }
 
@@ -905,8 +968,32 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         } => to_binary(&query_bidder(deps, env, auction_id, address)?),
         QueryMsg::Config {} => to_binary(&query_config(deps, env)?),
         QueryMsg::State {} => to_binary(&query_state(deps, env)?),
+        QueryMsg::Bids { auction_id } => to_binary(&query_bids(deps, env, auction_id)?),
     }
 }
+
+fn query_bids(deps: Deps, _env: Env, auction_id: u64) -> StdResult<HistoryResponse> {
+    let history_info = match HISTORIES.may_load(deps.storage, &auction_id.to_be_bytes())? {
+        None => None,
+        Some(history) => Some(history),
+    };
+    let mut hist = vec![];
+    if let Some(history) = history_info {
+        hist = history
+            .bids
+            .into_iter()
+            .map(|hist| HistoryBidResponse {
+                bidder: deps.api.addr_humanize(&hist.bidder).unwrap().to_string(),
+                amount: hist.amount,
+                time: hist.time,
+                instant_buy: hist.instant_buy,
+            })
+            .collect::<Vec<HistoryBidResponse>>();
+    }
+
+    Ok(HistoryResponse { bids: hist })
+}
+
 fn query_config(deps: Deps, _env: Env) -> StdResult<ConfigResponse> {
     let config = CONFIG.load(deps.storage)?;
     Ok(ConfigResponse {
