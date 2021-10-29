@@ -218,7 +218,7 @@ pub fn execute_register_private_sale(
     let res = Response::new()
         .add_message(burn_msg)
         .add_attribute("register_auction", auction_id.to_string())
-        .add_attribute("sender", sender.to_string())
+        .add_attribute("sender", sender)
         .add_attribute("amount_required", sent.to_string());
 
     Ok(res)
@@ -273,7 +273,7 @@ pub fn execute_create_auction(
     let valid_charity = match charity {
         None => None,
         Some(info) => {
-            if info.fee_percentage <= 0 || info.fee_percentage > 100 {
+            if info.fee_percentage == 0 || info.fee_percentage > 100 {
                 return Err(ContractError::PercentageFormat {});
             }
             let addr_validate = deps.api.addr_validate(info.address.as_str())?;
@@ -393,7 +393,7 @@ pub fn execute_retire_bids(
         amount: vec![deduct_tax(
             &deps.querier,
             Coin {
-                denom: config.denom.clone(),
+                denom: config.denom,
                 amount: bid.total_bid,
             },
         )?],
@@ -568,7 +568,7 @@ pub fn execute_withdraw_nft(
                 amount: vec![deduct_tax(
                     &deps.querier,
                     Coin {
-                        denom: config.denom.clone(),
+                        denom: config.denom,
                         amount: charity_amount,
                     },
                 )?],
@@ -648,7 +648,7 @@ pub fn execute_place_bid(
         }
     };
 
-    let bid_margin = current_bid.multiply_ratio(config.bid_margin as u128, 100 as u128);
+    let bid_margin = current_bid.multiply_ratio(config.bid_margin as u128, 100_u128);
     let min_bid = current_bid.checked_add(bid_margin).unwrap();
     let bid_total_sent = match BIDS.may_load(
         deps.storage,
@@ -657,7 +657,7 @@ pub fn execute_place_bid(
         None => Some(sent),
         Some(bid_sent) => Some(bid_sent.total_bid.checked_add(sent).unwrap()),
     }
-    .unwrap_or_else(|| sent);
+    .unwrap_or(sent);
 
     if bid_total_sent < min_bid {
         return Err(ContractError::MinBid(min_bid, bid_total_sent));
@@ -942,7 +942,7 @@ pub fn cw20_instance_reply(
                     ev.attributes
                         .into_iter()
                         .find(|attr| attr.key == "contract_address")
-                        .and_then(|addr| Some(addr.value))
+                        .map(|addr| addr.value)
                 })
                 .unwrap();
 
