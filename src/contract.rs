@@ -224,6 +224,7 @@ pub fn execute_register_private_sale(
     Ok(res)
 }
 
+#[warn(clippy::too_many_arguments)]
 pub fn execute_create_auction(
     deps: DepsMut,
     env: Env,
