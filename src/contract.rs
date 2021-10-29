@@ -1096,10 +1096,7 @@ mod tests {
         assert_eq!(1, res.messages.len());
     }
 
-    #[test]
-    fn create_auction() {
-        let mut deps = mock_dependencies(&coins(2, "token"));
-
+    fn init_default(deps: DepsMut) {
         let msg = InstantiateMsg {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
@@ -1110,51 +1107,62 @@ mod tests {
         };
 
         let info = mock_info("creator", &vec![]);
-        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+        let _res = instantiate(deps, mock_env(), info, msg).unwrap();
+    }
 
-        // ERROR create auction with end_time inferior current time
+    fn create_msg_nft(
+        start_price: Option<Uint128>,
+        start_time: Option<u64>,
+        end_time: u64,
+        charity: Option<CharityResponse>,
+        instant_buy: Option<Uint128>,
+        reserve_price: Option<Uint128>,
+        private_sale_privilege: Option<Uint128>,
+    ) -> Result<ExecuteMsg, ContractError> {
         let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: None,
-            end_time: 0,
-            charity: None,
-            instant_buy: None,
-            reserve_price: None,
-            private_sale_privilege: None,
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "market".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
-
-        let res = execute(
-            deps.as_mut(),
-            mock_env(),
-            mock_info("sender", &vec![]),
-            execute_msg,
-        )
-        .unwrap_err();
-
-        // ERROR create auction with time end == time start
-        let env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: Some(env.block.time.plus_seconds(1000).seconds()),
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: None,
-            instant_buy: None,
-            reserve_price: None,
-            private_sale_privilege: None,
+            start_price,
+            start_time,
+            end_time,
+            charity,
+            instant_buy,
+            reserve_price,
+            private_sale_privilege,
         };
         let send_msg = cw721::Cw721ReceiveMsg {
             sender: "sender".to_string(),
             token_id: "test".to_string(),
             msg: to_binary(&msg).unwrap(),
         };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
+        Ok(ExecuteMsg::ReceiveNft(send_msg))
+    }
 
+    #[test]
+    fn create_auction() {
+        let mut deps = mock_dependencies(&coins(2, "token"));
+        init_default(deps.as_mut());
+
+        // ERROR create auction with end_time inferior current time
+        let execute_msg = create_msg_nft(None, None, 0, None, None, None, None).unwrap();
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap_err();
+
+        // ERROR create auction with time end == time start
+        let env = mock_env();
+        let execute_msg = create_msg_nft(
+            None,
+            Some(env.block.time.plus_seconds(1000).seconds()),
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let res = execute(
             deps.as_mut(),
             mock_env(),
@@ -1165,24 +1173,19 @@ mod tests {
 
         // ERROR create auction with time end superior now but with Option Charity info wrong fee_percentage
         let env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: None,
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: Some(CharityResponse {
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            Some(CharityResponse {
                 address: "angel".to_string(),
                 fee_percentage: 101,
             }),
-            instant_buy: None,
-            reserve_price: None,
-            private_sale_privilege: None,
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "sender".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let res = execute(
             deps.as_mut(),
@@ -1194,22 +1197,16 @@ mod tests {
 
         // create auction with time end superior now but without options
         let env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: None,
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: None,
-            instant_buy: None,
-            reserve_price: None,
-            private_sale_privilege: None,
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "sender".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
-
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let res = execute(
             deps.as_mut(),
             mock_env(),
@@ -1276,22 +1273,16 @@ mod tests {
 
         // create auction with time end superior now but with Option start price
         let env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: Some(Uint128::from(1000_u128)),
-            start_time: None,
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: None,
-            instant_buy: None,
-            reserve_price: None,
-            private_sale_privilege: None,
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "sender".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
-
+        let execute_msg = create_msg_nft(
+            Some(Uint128::from(1000_u128)),
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let res = execute(
             deps.as_mut(),
             mock_env(),
@@ -1357,22 +1348,16 @@ mod tests {
 
         // create auction with time end superior now but with Option start price
         let env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: Some(env.block.time.plus_seconds(2000).seconds()),
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: None,
-            instant_buy: None,
-            reserve_price: None,
-            private_sale_privilege: None,
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "sender".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
-
+        let execute_msg = create_msg_nft(
+            None,
+            Some(env.block.time.plus_seconds(2000).seconds()),
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let res = execute(
             deps.as_mut(),
             mock_env(),
@@ -1441,22 +1426,16 @@ mod tests {
 
         // create auction with time end superior now but with Option instant buy
         let env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: None,
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: None,
-            instant_buy: Some(Uint128::from(1000_u128)),
-            reserve_price: None,
-            private_sale_privilege: None,
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "sender".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
-
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            Some(Uint128::from(1000_u128)),
+            None,
+            None,
+        )
+        .unwrap();
         let res = execute(
             deps.as_mut(),
             mock_env(),
@@ -1522,22 +1501,16 @@ mod tests {
 
         // create auction with time end superior now but with Option reserve price
         let env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: None,
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: None,
-            instant_buy: None,
-            reserve_price: Some(Uint128::from(1000_u128)),
-            private_sale_privilege: None,
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "sender".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
-
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            Some(Uint128::from(1000_u128)),
+            None,
+        )
+        .unwrap();
         let res = execute(
             deps.as_mut(),
             mock_env(),
@@ -1603,22 +1576,16 @@ mod tests {
 
         // create auction with time end superior now but with Option privilege sale
         let env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: None,
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: None,
-            instant_buy: None,
-            reserve_price: None,
-            private_sale_privilege: Some(Uint128::from(1000_u128)),
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "sender".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
-
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            Some(Uint128::from(1000_u128)),
+        )
+        .unwrap();
         let res = execute(
             deps.as_mut(),
             mock_env(),
@@ -1684,24 +1651,19 @@ mod tests {
 
         // create auction with time end superior now but with Option Charity info
         let env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: None,
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: Some(CharityResponse {
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            Some(CharityResponse {
                 address: "angel".to_string(),
                 fee_percentage: 10,
             }),
-            instant_buy: None,
-            reserve_price: None,
-            private_sale_privilege: None,
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "sender".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let res = execute(
             deps.as_mut(),
@@ -1779,41 +1741,24 @@ mod tests {
     #[test]
     fn place_bid_auction_retire_bid_reserve_price_private_sale() {
         let mut deps = mock_dependencies_custom(&coins(2, "token"));
-
-        let msg = InstantiateMsg {
-            denom: "uusd".to_string(),
-            cw20_code_id: 9,
-            cw20_label: "cw20".to_string(),
-            bid_margin: 5,
-            lota_fee: 5,
-            lota_contract: "loterra".to_string(),
-        };
-
-        let info = mock_info("creator", &vec![]);
-        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+        init_default(deps.as_mut());
 
         // ERROR create auction with end_time inferior current time
         let env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: None,
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: None,
-            instant_buy: None,
-            reserve_price: None,
-            private_sale_privilege: None,
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "market".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
-
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let res = execute(
             deps.as_mut(),
             env.clone(),
-            mock_info("sender", &vec![]),
+            mock_info("market", &vec![]),
             execute_msg,
         )
         .unwrap();
@@ -1846,25 +1791,20 @@ mod tests {
 
         // Instantiate with start price 1000 ust
         let env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: Some(Uint128::from(1000_u128)),
-            start_time: None,
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: None,
-            instant_buy: None,
-            reserve_price: None,
-            private_sale_privilege: None,
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "market".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
+        let execute_msg = create_msg_nft(
+            Some(Uint128::from(1000_u128)),
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let res = execute(
             deps.as_mut(),
             env.clone(),
-            mock_info("sender", &vec![]),
+            mock_info("market", &vec![]),
             execute_msg,
         )
         .unwrap();
@@ -2068,25 +2008,20 @@ mod tests {
 
         // Instantiate with start price 1000 ust
         let env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: None,
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: None,
-            instant_buy: Some(Uint128::from(10_000_u128)),
-            reserve_price: None,
-            private_sale_privilege: None,
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "market".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            Some(Uint128::from(10_000_u128)),
+            None,
+            None,
+        )
+        .unwrap();
         let res = execute(
             deps.as_mut(),
             env.clone(),
-            mock_info("sender", &vec![]),
+            mock_info("market", &vec![]),
             execute_msg,
         )
         .unwrap();
@@ -2109,25 +2044,20 @@ mod tests {
 
         // Instantiate with start price 1000 ust
         let env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: None,
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: None,
-            instant_buy: None,
-            reserve_price: None,
-            private_sale_privilege: Some(Uint128::from(10_000_u128)),
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "market".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            Some(Uint128::from(10_000_u128)),
+        )
+        .unwrap();
         let res = execute(
             deps.as_mut(),
             env.clone(),
-            mock_info("sender", &vec![]),
+            mock_info("market", &vec![]),
             execute_msg,
         )
         .unwrap();
@@ -2250,39 +2180,23 @@ mod tests {
            Withdraw nft creator no bidders
         */
         let mut deps = mock_dependencies(&coins(2, "token"));
+        init_default(deps.as_mut());
 
-        let msg = InstantiateMsg {
-            denom: "uusd".to_string(),
-            cw20_code_id: 9,
-            cw20_label: "cw20".to_string(),
-            bid_margin: 5,
-            lota_fee: 5,
-            lota_contract: "loterra".to_string(),
-        };
-
-        let info = mock_info("creator", &vec![]);
-        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
         let mut env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: None,
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: None,
-            instant_buy: None,
-            reserve_price: None,
-            private_sale_privilege: None,
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "market".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
-
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let res = execute(
             deps.as_mut(),
             env.clone(),
-            mock_info("sender", &vec![]),
+            mock_info("market", &vec![]),
             execute_msg,
         )
         .unwrap();
@@ -2315,35 +2229,19 @@ mod tests {
            Withdraw nft creator no bidders
         */
         let mut deps = mock_dependencies_custom(&coins(2, "token"));
+        init_default(deps.as_mut());
 
-        let msg = InstantiateMsg {
-            denom: "uusd".to_string(),
-            cw20_code_id: 9,
-            cw20_label: "cw20".to_string(),
-            bid_margin: 5,
-            lota_fee: 5,
-            lota_contract: "loterra".to_string(),
-        };
-
-        let info = mock_info("creator", &vec![]);
-        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
         let mut env = mock_env();
-        let msg = ReceiveMsg::CreateAuctionNft {
-            start_price: None,
-            start_time: None,
-            end_time: env.block.time.plus_seconds(1000).seconds(),
-            charity: None,
-            instant_buy: Some(Uint128::from(1_000u128)),
-            reserve_price: None,
-            private_sale_privilege: None,
-        };
-        let send_msg = cw721::Cw721ReceiveMsg {
-            sender: "sender".to_string(),
-            token_id: "test".to_string(),
-            msg: to_binary(&msg).unwrap(),
-        };
-        let execute_msg = ExecuteMsg::ReceiveNft(send_msg);
-
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            Some(Uint128::from(1_000u128)),
+            None,
+            None,
+        )
+        .unwrap();
         let res = execute(
             deps.as_mut(),
             env.clone(),
