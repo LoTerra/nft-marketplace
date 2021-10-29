@@ -499,7 +499,7 @@ pub fn execute_withdraw_nft(
 
     let mut msgs = vec![msg_execute];
     /*
-       TODO: Prepare msg to send rewards PRIV token
+       Prepare msg to send rewards PRIV token
     */
     // Send to winner and creator if exist
     if recipient_address_raw != item.creator {
@@ -526,7 +526,7 @@ pub fn execute_withdraw_nft(
         }));
 
         /*
-            TODO: Prepare msg to send payout to creator
+            Prepare msg to send payout to creator
         */
         if !net_amount_after.is_zero() {
             msgs.push(CosmosMsg::Bank(BankMsg::Send {
@@ -542,7 +542,7 @@ pub fn execute_withdraw_nft(
         }
 
         /*
-           TODO: Prepare msg send to lota
+           Prepare msg send to lota
         */
         if !lota_fee_amount.is_zero() {
             msgs.push(CosmosMsg::Bank(BankMsg::Send {
@@ -559,7 +559,7 @@ pub fn execute_withdraw_nft(
     }
 
     /*
-       TODO: Prepare msg to send charity if some charity
+       Prepare msg to send charity if some charity
     */
     if let Some(address) = charity_address {
         if !charity_amount.is_zero() {
@@ -912,7 +912,10 @@ pub fn execute_instant_buy(
         }
     }
 
-    let res = Response::new().add_attribute("create_auction_type", "NFT");
+    let res = Response::new()
+        .add_attribute("instant_buy", "NFT")
+        .add_attribute("nft_id", item.nft_id)
+        .add_attribute("auction_id", auction_id.to_string());
     Ok(res)
 }
 
@@ -970,17 +973,23 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 }
 
 fn query_bids(deps: Deps, _env: Env, auction_id: u64) -> StdResult<HistoryResponse> {
-    let history = HISTORIES.load(deps.storage, &auction_id.to_be_bytes())?;
-    let hist = history
-        .bids
-        .into_iter()
-        .map(|hist| HistoryBidResponse {
-            bidder: deps.api.addr_humanize(&hist.bidder).unwrap().to_string(),
-            amount: hist.amount,
-            time: hist.time,
-            instant_buy: hist.instant_buy,
-        })
-        .collect::<Vec<HistoryBidResponse>>();
+    let history_info = match HISTORIES.may_load(deps.storage, &auction_id.to_be_bytes())? {
+        None => None,
+        Some(history) => Some(history),
+    };
+    let mut hist = vec![];
+    if let Some(history) = history_info {
+        hist = history
+            .bids
+            .into_iter()
+            .map(|hist| HistoryBidResponse {
+                bidder: deps.api.addr_humanize(&hist.bidder).unwrap().to_string(),
+                amount: hist.amount,
+                time: hist.time,
+                instant_buy: hist.instant_buy,
+            })
+            .collect::<Vec<HistoryBidResponse>>();
+    }
 
     Ok(HistoryResponse { bids: hist })
 }
