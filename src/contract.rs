@@ -691,7 +691,7 @@ pub fn execute_place_bid(
         },
     )?;
 
-    let mut history_sent = sent.clone();
+    let mut history_sent = sent;
     match BIDS.may_load(
         deps.storage,
         (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
@@ -813,7 +813,7 @@ pub fn execute_instant_buy(
         _ => Err(ContractError::MultipleDenoms {}),
     }?;
 
-    let mut history_sent = sent.clone();
+    let mut history_sent = sent;
     match BIDS.may_load(
         deps.storage,
         (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
