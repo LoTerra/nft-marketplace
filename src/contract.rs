@@ -691,6 +691,7 @@ pub fn execute_place_bid(
         },
     )?;
 
+    let mut history_sent = sent.clone();
     match BIDS.may_load(
         deps.storage,
         (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
@@ -715,6 +716,9 @@ pub fn execute_place_bid(
                 (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
                 |bid| -> StdResult<_> {
                     let mut updated_bid = bid.unwrap();
+                    // Update history with sent compounded
+                    history_sent = updated_bid.total_bid.checked_add(sent)?;
+
                     updated_bid.bid_counter += 1;
                     updated_bid.total_bid = updated_bid.total_bid.checked_add(sent)?;
                     updated_bid.bids.push(BidAmountTimeInfo {
@@ -735,7 +739,7 @@ pub fn execute_place_bid(
             &HistoryInfo {
                 bids: vec![HistoryBidInfo {
                     bidder: sender_raw,
-                    amount: sent,
+                    amount: history_sent,
                     time: env.block.time.seconds(),
                     instant_buy: false,
                 }],
@@ -749,7 +753,7 @@ pub fn execute_place_bid(
                     let mut updated_hist = hist.unwrap();
                     updated_hist.bids.push(HistoryBidInfo {
                         bidder: sender_raw,
-                        amount: sent,
+                        amount: history_sent,
                         time: env.block.time.seconds(),
                         instant_buy: false,
                     });
@@ -813,6 +817,7 @@ pub fn execute_instant_buy(
         _ => Err(ContractError::MultipleDenoms {}),
     }?;
 
+    let mut history_sent = sent.clone();
     match BIDS.may_load(
         deps.storage,
         (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
@@ -837,13 +842,15 @@ pub fn execute_instant_buy(
                 (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
                 |bid| -> StdResult<_> {
                     let mut updated_bid = bid.unwrap();
+                    // Update history with sent compounded
+                    history_sent = updated_bid.total_bid.checked_add(sent)?;
+
                     updated_bid.bid_counter += 1;
                     updated_bid.total_bid = updated_bid.total_bid.checked_add(sent)?;
                     updated_bid.bids.push(BidAmountTimeInfo {
                         amount: sent,
                         time: env.block.time.seconds(),
                     });
-
                     Ok(updated_bid)
                 },
             )?;
@@ -903,7 +910,7 @@ pub fn execute_instant_buy(
                     let mut updated_hist = hist.unwrap();
                     updated_hist.bids.push(HistoryBidInfo {
                         bidder: sender_raw,
-                        amount: sent,
+                        amount: history_sent,
                         time: env.block.time.seconds(),
                         instant_buy: true,
                     });
