@@ -776,9 +776,6 @@ pub fn execute_instant_buy(
     info: MessageInfo,
     auction_id: u64,
 ) -> Result<Response, ContractError> {
-    /*
-       TODO: Subtract already bids from the instant buy amount
-    */
 
     let config = CONFIG.load(deps.storage)?;
     let item = match ITEMS.may_load(deps.storage, &auction_id.to_be_bytes())? {

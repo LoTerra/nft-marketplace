@@ -56,10 +56,10 @@
       "description": "Get bids history from an auction id",
       "type": "object",
       "required": [
-        "bids"
+        "history_bids"
       ],
       "properties": {
-        "bids": {
+        "history_bids": {
           "type": "object",
           "required": [
             "auction_id"

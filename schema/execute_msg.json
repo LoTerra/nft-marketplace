@@ -29,10 +29,10 @@
       "description": "Retire all your bids",
       "type": "object",
       "required": [
-        "retire_bids"
+        "retract_bids"
       ],
       "properties": {
-        "retire_bids": {
+        "retract_bids": {
           "type": "object",
           "required": [
             "auction_id"
