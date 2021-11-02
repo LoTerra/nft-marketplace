@@ -776,7 +776,6 @@ pub fn execute_instant_buy(
     info: MessageInfo,
     auction_id: u64,
 ) -> Result<Response, ContractError> {
-
     let config = CONFIG.load(deps.storage)?;
     let item = match ITEMS.may_load(deps.storage, &auction_id.to_be_bytes())? {
         None => Err(ContractError::Unauthorized {}),
