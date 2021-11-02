@@ -85,7 +85,7 @@ pub fn execute(
         ExecuteMsg::InstantBuy { auction_id } => execute_instant_buy(deps, env, info, auction_id),
         ExecuteMsg::WithdrawNft { auction_id } => execute_withdraw_nft(deps, env, info, auction_id),
         ExecuteMsg::PlaceBid { auction_id } => execute_place_bid(deps, env, info, auction_id),
-        ExecuteMsg::RetireBids { auction_id } => execute_retire_bids(deps, env, info, auction_id),
+        ExecuteMsg::RetractBids { auction_id } => execute_retract_bids(deps, env, info, auction_id),
         ExecuteMsg::ReceiveNft(msg) => execute_receive_cw721(deps, env, info, msg),
         ExecuteMsg::Receive(msg) => execute_receive_cw20(deps, env, info, msg),
     }
@@ -350,7 +350,7 @@ pub fn execute_create_auction(
     Ok(res)
 }
 
-pub fn execute_retire_bids(
+pub fn execute_retract_bids(
     deps: DepsMut,
     _env: Env,
     info: MessageInfo,
@@ -976,7 +976,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         } => to_binary(&query_bidder(deps, env, auction_id, address)?),
         QueryMsg::Config {} => to_binary(&query_config(deps, env)?),
         QueryMsg::State {} => to_binary(&query_state(deps, env)?),
-        QueryMsg::Bids { auction_id } => to_binary(&query_bids(deps, env, auction_id)?),
+        QueryMsg::HistoryBids { auction_id } => to_binary(&query_bids(deps, env, auction_id)?),
     }
 }
 
@@ -1877,7 +1877,7 @@ mod tests {
         )
         .unwrap();
         // ERROR sam retire bids before end because he is the higher bidder
-        let msg = ExecuteMsg::RetireBids { auction_id: 1 };
+        let msg = ExecuteMsg::RetractBids { auction_id: 1 };
         let res = execute(
             deps.as_mut(),
             env.clone(),
@@ -1902,7 +1902,7 @@ mod tests {
         .unwrap();
 
         // SUCCESS sam retire bids before end because Alice is now the highest bidder
-        let msg = ExecuteMsg::RetireBids { auction_id: 1 };
+        let msg = ExecuteMsg::RetractBids { auction_id: 1 };
         let res = execute(
             deps.as_mut(),
             env.clone(),
@@ -1964,7 +1964,7 @@ mod tests {
         assert_eq!(item.total_bids, 4);
 
         // ERROR Alice try to retire bids
-        let msg = ExecuteMsg::RetireBids { auction_id: 1 };
+        let msg = ExecuteMsg::RetractBids { auction_id: 1 };
         let res = execute(
             deps.as_mut(),
             env.clone(),
@@ -1974,7 +1974,7 @@ mod tests {
         .unwrap_err();
 
         // SUCCESS bob to retire bids
-        let msg = ExecuteMsg::RetireBids { auction_id: 1 };
+        let msg = ExecuteMsg::RetractBids { auction_id: 1 };
         let res = execute(
             deps.as_mut(),
             env.clone(),

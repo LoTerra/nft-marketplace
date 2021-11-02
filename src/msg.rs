@@ -21,7 +21,7 @@ pub enum ExecuteMsg {
     /// Place your bid
     PlaceBid { auction_id: u64 },
     /// Retire all your bids
-    RetireBids { auction_id: u64 },
+    RetractBids { auction_id: u64 },
     /// Owner can withdraw the NFT at the end of the sale
     WithdrawNft { auction_id: u64 },
     /// Instant buy if allowed on the sale
@@ -57,7 +57,7 @@ pub enum QueryMsg {
     /// Get bid info by auction id and address of the bidder
     Bidder { auction_id: u64, address: String },
     /// Get bids history from an auction id
-    Bids { auction_id: u64 },
+    HistoryBids { auction_id: u64 },
     /// Get config
     Config {},
     /// Get state
