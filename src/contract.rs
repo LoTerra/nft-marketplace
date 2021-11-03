@@ -1036,15 +1036,6 @@ fn query_all_auctions(
     Ok(AllAuctionsResponse { auctions: items? })
 }
 
-// this will set the first key after the provided key, by appending a 1 byte
-fn calc_range_start(start_after: Option<u64>) -> Option<Vec<u8>> {
-    start_after.map(|id| {
-        let mut v = id.to_be_bytes().to_vec();
-        v.push(1);
-        v
-    })
-}
-
 fn query_bids(deps: Deps, _env: Env, auction_id: u64) -> StdResult<HistoryResponse> {
     let history_info = match HISTORIES.may_load(deps.storage, &auction_id.to_be_bytes())? {
         None => None,
