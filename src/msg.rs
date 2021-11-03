@@ -62,6 +62,11 @@ pub enum QueryMsg {
     Config {},
     /// Get state
     State {},
+    /// Get all auctions
+    AllAuctions {
+        start_after: Option<u64>,
+        limit: Option<u32>,
+    },
 }
 
 // We define a custom struct for each query response
@@ -122,4 +127,9 @@ pub struct HistoryBidResponse {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct HistoryResponse {
     pub bids: Vec<HistoryBidResponse>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct AllAuctionsResponse {
+    pub auctions: Vec<(u64, AuctionResponse)>,
 }

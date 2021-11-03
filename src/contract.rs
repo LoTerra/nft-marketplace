@@ -1,16 +1,18 @@
 use cosmwasm_std::{
     entry_point, from_binary, to_binary, BankMsg, Binary, Coin, ContractResult, CosmosMsg, Deps,
-    DepsMut, Env, MessageInfo, Reply, Response, StdError, StdResult, SubMsg,
+    DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult, SubMsg,
     SubMsgExecutionResponse, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
 use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
+use cw_storage_plus::Bound;
+use std::convert::TryInto;
 
 use crate::error::ContractError;
 use crate::msg::{
-    AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg, HistoryBidResponse,
-    HistoryResponse, InstantiateMsg, QueryMsg, ReceiveMsg, StateResponse,
+    AllAuctionsResponse, AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg,
+    HistoryBidResponse, HistoryResponse, InstantiateMsg, QueryMsg, ReceiveMsg, StateResponse,
 };
 use crate::state::{
     BidAmountTimeInfo, BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, State,
@@ -973,7 +975,74 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::Config {} => to_binary(&query_config(deps, env)?),
         QueryMsg::State {} => to_binary(&query_state(deps, env)?),
         QueryMsg::HistoryBids { auction_id } => to_binary(&query_bids(deps, env, auction_id)?),
+        QueryMsg::AllAuctions { start_after, limit } => {
+            to_binary(&query_all_auctions(deps, start_after, limit)?)
+        }
     }
+}
+
+const DEFAULT_LIMIT: u32 = 10;
+const MAX_LIMIT: u32 = 30;
+fn query_all_auctions(
+    deps: Deps,
+    start_after: Option<u64>,
+    limit: Option<u32>,
+) -> StdResult<AllAuctionsResponse> {
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as usize;
+    let start = start_after.map(|d| Bound::Exclusive(d.to_be_bytes().to_vec()));
+
+    let items = ITEMS
+        .range(deps.storage, start, None, Order::Ascending)
+        .take(limit)
+        .map(|pair| {
+            pair.and_then(|(k, item)| {
+                let highest_bidder = match item.highest_bidder {
+                    None => None,
+                    Some(highest_bidder) => {
+                        Some(deps.api.addr_humanize(&highest_bidder)?.to_string())
+                    }
+                };
+                let charity = match item.charity {
+                    None => None,
+                    Some(charity) => Some(CharityResponse {
+                        address: deps.api.addr_humanize(&charity.address)?.to_string(),
+                        fee_percentage: charity.fee_percentage,
+                    }),
+                };
+
+                Ok((
+                    u64::from_be_bytes(k.try_into().unwrap()),
+                    AuctionResponse {
+                        creator: deps.api.addr_humanize(&item.creator)?.to_string(),
+                        start_price: item.start_price,
+                        start_time: item.start_time,
+                        end_time: item.end_time,
+                        highest_bid: item.highest_bid,
+                        highest_bidder,
+                        nft_contract: deps.api.addr_humanize(&item.nft_contract)?.to_string(),
+                        nft_id: item.nft_id,
+                        total_bids: item.total_bids,
+                        charity,
+                        instant_buy: item.instant_buy,
+                        reserve_price: item.reserve_price,
+                        private_sale_privilege: item.private_sale_privilege,
+                        resolved: item.resolved,
+                    },
+                ))
+            })
+        })
+        .collect::<StdResult<Vec<(u64, AuctionResponse)>>>();
+
+    Ok(AllAuctionsResponse { auctions: items? })
+}
+
+// this will set the first key after the provided key, by appending a 1 byte
+fn calc_range_start(start_after: Option<u64>) -> Option<Vec<u8>> {
+    start_after.map(|id| {
+        let mut v = id.to_be_bytes().to_vec();
+        v.push(1);
+        v
+    })
 }
 
 fn query_bids(deps: Deps, _env: Env, auction_id: u64) -> StdResult<HistoryResponse> {
@@ -1740,6 +1809,13 @@ mod tests {
                 }
             ]
         );
+
+        /*
+           TODO: Get current auction with limit
+        */
+        let msg = query_all_auctions(deps.as_ref(), Some(5), None);
+        println!("Query auctions");
+        println!("{:?}", msg);
     }
 
     #[test]
