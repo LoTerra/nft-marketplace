@@ -76,6 +76,33 @@
       "additionalProperties": false
     },
     {
+      "description": "Get bids history from an auction id",
+      "type": "object",
+      "required": [
+        "history_bidder_bids"
+      ],
+      "properties": {
+        "history_bidder_bids": {
+          "type": "object",
+          "required": [
+            "address",
+            "auction_id"
+          ],
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "auction_id": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
       "description": "Get config",
       "type": "object",
       "required": [

@@ -1,4 +1,4 @@
-use crate::state::BidAmountTimeInfo;
+
 use cosmwasm_std::Uint128;
 use cw20::Cw20ReceiveMsg;
 use cw721::Cw721ReceiveMsg;
@@ -58,6 +58,8 @@ pub enum QueryMsg {
     Bidder { auction_id: u64, address: String },
     /// Get bids history from an auction id
     HistoryBids { auction_id: u64 },
+    /// Get bids history from an auction id
+    HistoryBidderBids { auction_id: u64, address: String },
     /// Get config
     Config {},
     /// Get state
@@ -90,7 +92,6 @@ pub struct AuctionResponse {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct BidResponse {
-    pub bids: Vec<BidAmountTimeInfo>,
     pub bid_counter: u64,
     pub total_bid: Uint128,
     pub privilege_used: Option<Uint128>,

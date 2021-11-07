@@ -14,10 +14,7 @@ use crate::msg::{
     AllAuctionsResponse, AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg,
     HistoryBidResponse, HistoryResponse, InstantiateMsg, QueryMsg, ReceiveMsg, StateResponse,
 };
-use crate::state::{
-    BidAmountTimeInfo, BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, State,
-    BIDS, CONFIG, HISTORIES, ITEMS, STATE,
-};
+use crate::state::{BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, State, BIDS, CONFIG, HISTORIES, ITEMS, STATE, HISTORIES_BIDDER};
 use crate::taxation::deduct_tax;
 
 // version info for migration info
@@ -202,7 +199,6 @@ pub fn execute_register_private_sale(
         deps.storage,
         (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
         &BidInfo {
-            bids: vec![],
             bid_counter: 0,
             total_bid: Uint128::zero(),
             privilege_used: Some(sent),
@@ -255,6 +251,12 @@ pub fn execute_create_auction(
             return Err(ContractError::EndTimeExpired {});
         }
     }
+    /*
+       Query NFT'S
+    */
+    // let prepare_query_msg = Cw721QueryMsg::NftInfo { token_id: token_id.clone() };
+    // let execute_query_msg = WasmQuery::Smart { contract_addr: info.sender.to_string(), msg: to_binary(&prepare_query_msg)? };
+    // let query_msg: NftInfoResponse<T>  = deps.querier.query(&execute_query_msg.into())?;
 
     /*
        check if start_price is less than reserve_price and instant_buy
@@ -702,10 +704,6 @@ pub fn execute_place_bid(
             deps.storage,
             (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
             &BidInfo {
-                bids: vec![BidAmountTimeInfo {
-                    amount: sent,
-                    time: env.block.time.seconds(),
-                }],
                 bid_counter: 1,
                 total_bid: sent,
                 privilege_used: None,
@@ -723,12 +721,38 @@ pub fn execute_place_bid(
 
                     updated_bid.bid_counter += 1;
                     updated_bid.total_bid = updated_bid.total_bid.checked_add(sent)?;
-                    updated_bid.bids.push(BidAmountTimeInfo {
-                        amount: sent,
-                        time: env.block.time.seconds(),
-                    });
-
                     Ok(updated_bid)
+                },
+            )?;
+        }
+    }
+
+    match HISTORIES_BIDDER.may_load(deps.storage, (&auction_id.to_be_bytes(), &sender_raw.as_slice()))? {
+        None => HISTORIES_BIDDER.save(
+            deps.storage,
+            (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+            &HistoryInfo {
+                bids: vec![HistoryBidInfo {
+                    bidder: sender_raw.clone(),
+                    amount: history_sent,
+                    time: env.block.time.seconds(),
+                    instant_buy: false,
+                }],
+            },
+        )?,
+        Some(_) => {
+            HISTORIES_BIDDER.update(
+                deps.storage,
+                (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+                |hist| -> StdResult<_> {
+                    let mut updated_hist = hist.unwrap();
+                    updated_hist.bids.push(HistoryBidInfo {
+                        bidder: sender_raw.clone(),
+                        amount: history_sent,
+                        time: env.block.time.seconds(),
+                        instant_buy: false,
+                    });
+                    Ok(updated_hist)
                 },
             )?;
         }
@@ -824,10 +848,6 @@ pub fn execute_instant_buy(
             deps.storage,
             (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
             &BidInfo {
-                bids: vec![BidAmountTimeInfo {
-                    amount: sent,
-                    time: env.block.time.seconds(),
-                }],
                 bid_counter: 1,
                 total_bid: sent,
                 privilege_used: None,
@@ -845,10 +865,6 @@ pub fn execute_instant_buy(
 
                     updated_bid.bid_counter += 1;
                     updated_bid.total_bid = updated_bid.total_bid.checked_add(sent)?;
-                    updated_bid.bids.push(BidAmountTimeInfo {
-                        amount: sent,
-                        time: env.block.time.seconds(),
-                    });
                     Ok(updated_bid)
                 },
             )?;
@@ -886,6 +902,37 @@ pub fn execute_instant_buy(
             Ok(updated_item)
         },
     )?;
+
+    match HISTORIES_BIDDER.may_load(deps.storage, (&auction_id.to_be_bytes(), &sender_raw.as_slice()))? {
+        None => HISTORIES_BIDDER.save(
+            deps.storage,
+            (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+            &HistoryInfo {
+                bids: vec![HistoryBidInfo {
+                    bidder: sender_raw.clone(),
+                    amount: history_sent,
+                    time: env.block.time.seconds(),
+                    instant_buy: true,
+                }],
+            },
+        )?,
+        Some(_) => {
+            HISTORIES_BIDDER.update(
+                deps.storage,
+                (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+                |hist| -> StdResult<_> {
+                    let mut updated_hist = hist.unwrap();
+                    updated_hist.bids.push(HistoryBidInfo {
+                        bidder: sender_raw.clone(),
+                        amount: history_sent,
+                        time: env.block.time.seconds(),
+                        instant_buy: true,
+                    });
+                    Ok(updated_hist)
+                },
+            )?;
+        }
+    }
 
     match HISTORIES.may_load(deps.storage, &auction_id.to_be_bytes())? {
         None => HISTORIES.save(
@@ -975,6 +1022,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::Config {} => to_binary(&query_config(deps, env)?),
         QueryMsg::State {} => to_binary(&query_state(deps, env)?),
         QueryMsg::HistoryBids { auction_id } => to_binary(&query_bids(deps, env, auction_id)?),
+        QueryMsg::HistoryBidderBids {auction_id, address}=> to_binary(&query_bidder_bids(deps, env, auction_id, address)?),
         QueryMsg::AllAuctions { start_after, limit } => {
             to_binary(&query_all_auctions(deps, start_after, limit)?)
         }
@@ -1038,6 +1086,29 @@ fn query_all_auctions(
 
 fn query_bids(deps: Deps, _env: Env, auction_id: u64) -> StdResult<HistoryResponse> {
     let history_info = match HISTORIES.may_load(deps.storage, &auction_id.to_be_bytes())? {
+        None => None,
+        Some(history) => Some(history),
+    };
+    let mut hist = vec![];
+    if let Some(history) = history_info {
+        hist = history
+            .bids
+            .into_iter()
+            .map(|hist| HistoryBidResponse {
+                bidder: deps.api.addr_humanize(&hist.bidder).unwrap().to_string(),
+                amount: hist.amount,
+                time: hist.time,
+                instant_buy: hist.instant_buy,
+            })
+            .collect::<Vec<HistoryBidResponse>>();
+    }
+
+    Ok(HistoryResponse { bids: hist })
+}
+
+fn query_bidder_bids(deps: Deps, _env: Env, auction_id: u64, address: String) -> StdResult<HistoryResponse> {
+    let addr_raw = deps.api.addr_canonicalize(&address)?;
+    let history_info = match HISTORIES_BIDDER.may_load(deps.storage, (&auction_id.to_be_bytes(), &addr_raw.as_slice()))? {
         None => None,
         Some(history) => Some(history),
     };
@@ -1123,7 +1194,6 @@ fn query_bidder(deps: Deps, _env: Env, auction_id: u64, address: String) -> StdR
         Some(bid) => Ok(bid),
     }?;
     Ok(BidResponse {
-        bids: bid.bids,
         bid_counter: bid.bid_counter,
         total_bid: bid.total_bid,
         privilege_used: bid.privilege_used,
@@ -2003,7 +2073,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(bid_alice.total_bid, Uint128::from(2205_u128));
-        assert_eq!(bid_alice.bids.len(), 2);
         assert_eq!(bid_alice.bid_counter, 2);
         assert_eq!(bid_alice.privilege_used, None);
 
@@ -2015,7 +2084,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(bid_bob.total_bid, Uint128::from(2000_u128));
-        assert_eq!(bid_bob.bids.len(), 1);
         assert_eq!(bid_bob.bid_counter, 1);
         assert_eq!(bid_bob.privilege_used, None);
 
