@@ -14,7 +14,10 @@ use crate::msg::{
     AllAuctionsResponse, AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg,
     HistoryBidResponse, HistoryResponse, InstantiateMsg, QueryMsg, ReceiveMsg, StateResponse,
 };
-use crate::state::{BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, State, BIDS, CONFIG, HISTORIES, ITEMS, STATE, HISTORIES_BIDDER};
+use crate::state::{
+    BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, State, BIDS, CONFIG,
+    HISTORIES, HISTORIES_BIDDER, ITEMS, STATE,
+};
 use crate::taxation::deduct_tax;
 
 // version info for migration info
@@ -408,7 +411,7 @@ pub fn execute_retract_bids(
     if !bid.resolved {
         let privilege_msg = Cw20ExecuteMsg::Mint {
             recipient: info.sender.to_string(),
-            amount: Uint128::from(1_u128),
+            amount: Uint128::from(1_000_000_u128),
         };
         let execute_privilege_msg = CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
@@ -508,7 +511,7 @@ pub fn execute_withdraw_nft(
     */
     // Send to winner and creator if exist
     if recipient_address_raw != item.creator {
-        let priv_reward_amount = Uint128::from(5_u128);
+        let priv_reward_amount = Uint128::from(5_000_000_u128);
 
         // Send to creator
         msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
@@ -727,7 +730,10 @@ pub fn execute_place_bid(
         }
     }
 
-    match HISTORIES_BIDDER.may_load(deps.storage, (&auction_id.to_be_bytes(), &sender_raw.as_slice()))? {
+    match HISTORIES_BIDDER.may_load(
+        deps.storage,
+        (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+    )? {
         None => HISTORIES_BIDDER.save(
             deps.storage,
             (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
@@ -903,7 +909,10 @@ pub fn execute_instant_buy(
         },
     )?;
 
-    match HISTORIES_BIDDER.may_load(deps.storage, (&auction_id.to_be_bytes(), &sender_raw.as_slice()))? {
+    match HISTORIES_BIDDER.may_load(
+        deps.storage,
+        (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+    )? {
         None => HISTORIES_BIDDER.save(
             deps.storage,
             (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
@@ -1022,7 +1031,10 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::Config {} => to_binary(&query_config(deps, env)?),
         QueryMsg::State {} => to_binary(&query_state(deps, env)?),
         QueryMsg::HistoryBids { auction_id } => to_binary(&query_bids(deps, env, auction_id)?),
-        QueryMsg::HistoryBidderBids {auction_id, address}=> to_binary(&query_bidder_bids(deps, env, auction_id, address)?),
+        QueryMsg::HistoryBidderBids {
+            auction_id,
+            address,
+        } => to_binary(&query_bidder_bids(deps, env, auction_id, address)?),
         QueryMsg::AllAuctions { start_after, limit } => {
             to_binary(&query_all_auctions(deps, start_after, limit)?)
         }
@@ -1106,9 +1118,17 @@ fn query_bids(deps: Deps, _env: Env, auction_id: u64) -> StdResult<HistoryRespon
     Ok(HistoryResponse { bids: hist })
 }
 
-fn query_bidder_bids(deps: Deps, _env: Env, auction_id: u64, address: String) -> StdResult<HistoryResponse> {
+fn query_bidder_bids(
+    deps: Deps,
+    _env: Env,
+    auction_id: u64,
+    address: String,
+) -> StdResult<HistoryResponse> {
     let addr_raw = deps.api.addr_canonicalize(&address)?;
-    let history_info = match HISTORIES_BIDDER.may_load(deps.storage, (&auction_id.to_be_bytes(), &addr_raw.as_slice()))? {
+    let history_info = match HISTORIES_BIDDER.may_load(
+        deps.storage,
+        (&auction_id.to_be_bytes(), &addr_raw.as_slice()),
+    )? {
         None => None,
         Some(history) => Some(history),
     };

@@ -61,8 +61,8 @@ pub struct BidInfo {
 pub const BIDS: Map<(&[u8], &[u8]), BidInfo> = Map::new("bids");
 
 /*
-    History bidder info
- */
+   History bidder info
+*/
 
 /*
   Bids stats
