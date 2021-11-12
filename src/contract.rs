@@ -250,7 +250,7 @@ pub fn execute_create_auction(
     }
 
     if let Some(time) = start_time {
-        if time <= end_time.checked_add(MIN_TIME_AUCTION).unwrap() {
+        if time >= end_time.checked_add(MIN_TIME_AUCTION).unwrap() {
             return Err(ContractError::EndTimeExpired {});
         }
     }
