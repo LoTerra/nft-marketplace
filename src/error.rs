@@ -27,6 +27,9 @@ pub enum ContractError {
     #[error("Multiple denom not allowed")]
     MultipleDenoms {},
 
+    #[error("Wait until auction start")]
+    AuctionNotStarted {},
+
     #[error("Inaccurate funds for instant buying price is {0} your total bids is {1} ")]
     InaccurateFunds(Uint128, Uint128),
 

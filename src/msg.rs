@@ -75,7 +75,7 @@ pub enum QueryMsg {
 pub struct AuctionResponse {
     pub creator: String,
     pub start_price: Option<Uint128>,
-    pub start_time: Option<u64>,
+    pub start_time: u64,
     pub end_time: u64,
     pub highest_bid: Option<Uint128>,
     pub highest_bidder: Option<String>,

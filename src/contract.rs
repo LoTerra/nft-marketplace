@@ -245,15 +245,19 @@ pub fn execute_create_auction(
     let sender_raw = deps.api.addr_canonicalize(sender.as_ref())?;
     let contract_raw = deps.api.addr_canonicalize(info.sender.as_ref())?;
 
-    if env.block.time.seconds() > end_time.checked_add(MIN_TIME_AUCTION).unwrap() {
+    if env.block.time.plus_seconds(MIN_TIME_AUCTION).seconds() > end_time {
         return Err(ContractError::EndTimeExpired {});
     }
 
-    if let Some(time) = start_time {
-        if time >= end_time.checked_add(MIN_TIME_AUCTION).unwrap() {
-            return Err(ContractError::EndTimeExpired {});
-        }
+    let start = match start_time {
+        None => env.block.time.seconds(),
+        Some(time) => time,
+    };
+
+    if start.checked_add(MIN_TIME_AUCTION).unwrap() >= end_time {
+        return Err(ContractError::EndTimeExpired {});
     }
+
     /*
        Query NFT'S
     */
@@ -326,7 +330,7 @@ pub fn execute_create_auction(
         &ItemInfo {
             creator: sender_raw,
             start_price,
-            start_time,
+            start_time: start,
             end_time,
             highest_bid: None,
             highest_bidder: None,
@@ -619,9 +623,15 @@ pub fn execute_place_bid(
 
     let item = ITEMS.load(deps.storage, &auction_id.to_be_bytes())?;
 
+    // Verify if auction ended
     if item.end_time < env.block.time.seconds() {
         return Err(ContractError::EndTimeExpired {});
     }
+    // Verify if auction is started
+    if item.start_time > env.block.time.seconds() {
+        return Err(ContractError::AuctionNotStarted {});
+    }
+
     // Handle creator are not bidding
     if item.creator == sender_raw {
         return Err(ContractError::Unauthorized {});
@@ -1379,7 +1389,7 @@ mod tests {
         );
         assert_eq!(item.highest_bid, None);
         assert_eq!(item.nft_id, "test".to_string());
-        assert_eq!(item.start_time, None);
+        assert_eq!(item.start_time, mock_env().block.time.seconds());
         assert_eq!(item.start_price, None);
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, None);
@@ -1455,7 +1465,7 @@ mod tests {
         );
         assert_eq!(item.highest_bid, None);
         assert_eq!(item.nft_id, "test".to_string());
-        assert_eq!(item.start_time, None);
+        assert_eq!(item.start_time, mock_env().block.time.seconds());
         assert_eq!(item.start_price, Some(Uint128::from(1000_u128)));
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, None);
@@ -1505,7 +1515,7 @@ mod tests {
         let execute_msg = create_msg_nft(
             None,
             Some(env.block.time.plus_seconds(2000).seconds()),
-            env.block.time.plus_seconds(1000).seconds(),
+            env.block.time.plus_seconds(5000).seconds(),
             None,
             None,
             None,
@@ -1530,14 +1540,11 @@ mod tests {
         );
         assert_eq!(item.highest_bid, None);
         assert_eq!(item.nft_id, "test".to_string());
-        assert_eq!(
-            item.start_time,
-            Some(env.block.time.plus_seconds(2000).seconds())
-        );
+        assert_eq!(item.start_time, env.block.time.plus_seconds(2000).seconds());
         assert_eq!(item.start_price, None);
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, None);
-        assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
+        assert_eq!(item.end_time, env.block.time.plus_seconds(5000).seconds());
         assert_eq!(item.private_sale_privilege, None);
         assert_eq!(item.total_bids, 0);
         assert_eq!(item.instant_buy, None);
@@ -1608,7 +1615,7 @@ mod tests {
         );
         assert_eq!(item.highest_bid, None);
         assert_eq!(item.nft_id, "test".to_string());
-        assert_eq!(item.start_time, None);
+        assert_eq!(item.start_time, mock_env().block.time.seconds());
         assert_eq!(item.start_price, None);
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, None);
@@ -1683,7 +1690,7 @@ mod tests {
         );
         assert_eq!(item.highest_bid, None);
         assert_eq!(item.nft_id, "test".to_string());
-        assert_eq!(item.start_time, None);
+        assert_eq!(item.start_time, mock_env().block.time.seconds());
         assert_eq!(item.start_price, None);
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, Some(Uint128::from(1000_u128)));
@@ -1758,7 +1765,7 @@ mod tests {
         );
         assert_eq!(item.highest_bid, None);
         assert_eq!(item.nft_id, "test".to_string());
-        assert_eq!(item.start_time, None);
+        assert_eq!(item.start_time, mock_env().block.time.seconds());
         assert_eq!(item.start_price, None);
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, None);
@@ -1837,7 +1844,7 @@ mod tests {
         );
         assert_eq!(item.highest_bid, None);
         assert_eq!(item.nft_id, "test".to_string());
-        assert_eq!(item.start_time, None);
+        assert_eq!(item.start_time, mock_env().block.time.seconds());
         assert_eq!(item.start_price, None);
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, None);
