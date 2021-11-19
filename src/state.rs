@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use cosmwasm_std::{CanonicalAddr, Uint128};
+use cosmwasm_std::{CanonicalAddr, Decimal, Uint128};
 use cw_storage_plus::{Item, Map};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
@@ -10,6 +10,8 @@ pub struct Config {
     pub bid_margin: u8,
     pub lota_fee: u8,
     pub lota_contract: CanonicalAddr,
+    pub privilege_full_rewards: Decimal,
+    pub privilege_partial_rewards: Decimal,
 }
 pub const CONFIG: Item<Config> = Item::new("config");
 

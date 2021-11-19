@@ -1,6 +1,6 @@
 use cosmwasm_std::{
-    entry_point, from_binary, to_binary, BankMsg, Binary, Coin, ContractResult, CosmosMsg, Deps,
-    DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult, SubMsg,
+    entry_point, from_binary, to_binary, BankMsg, Binary, Coin, ContractResult, CosmosMsg, Decimal,
+    Deps, DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult, SubMsg,
     SubMsgExecutionResponse, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
@@ -8,6 +8,7 @@ use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
 use cw_storage_plus::Bound;
 use std::convert::TryInto;
+use std::ops::Mul;
 
 use crate::error::ContractError;
 use crate::msg::{
@@ -37,6 +38,14 @@ pub fn instantiate(
         bid_margin: msg.bid_margin,
         lota_fee: msg.lota_fee,
         lota_contract: deps.api.addr_canonicalize(&msg.lota_contract)?,
+        privilege_full_rewards: Decimal::from_ratio(
+            Uint128::from(msg.privilege_full_rewards),
+            Uint128::from(100u128),
+        ),
+        privilege_partial_rewards: Decimal::from_ratio(
+            Uint128::from(msg.privilege_partial_rewards),
+            Uint128::from(100u128),
+        ),
     };
 
     CONFIG.save(deps.storage, &config)?;
@@ -413,9 +422,10 @@ pub fn execute_retract_bids(
     let mut msgs = vec![bank_msg];
 
     if !bid.resolved {
+        let priv_reward_amount = bid.total_bid.mul(config.privilege_partial_rewards);
         let privilege_msg = Cw20ExecuteMsg::Mint {
             recipient: info.sender.to_string(),
-            amount: Uint128::from(1_000_000_u128),
+            amount: priv_reward_amount,
         };
         let execute_privilege_msg = CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
@@ -515,32 +525,32 @@ pub fn execute_withdraw_nft(
     */
     // Send to winner and creator if exist
     if recipient_address_raw != item.creator {
-        let priv_reward_amount = Uint128::from(5_000_000_u128);
-
-        // Send to creator
-        msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
-            contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
-            msg: to_binary(&Cw20ExecuteMsg::Mint {
-                recipient: deps.api.addr_humanize(&item.creator)?.to_string(),
-                amount: priv_reward_amount,
-            })?,
-            funds: vec![],
-        }));
-
-        // Send to creator
-        msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
-            contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
-            msg: to_binary(&Cw20ExecuteMsg::Mint {
-                recipient: deps.api.addr_humanize(&recipient_address_raw)?.to_string(),
-                amount: priv_reward_amount,
-            })?,
-            funds: vec![],
-        }));
-
-        /*
-            Prepare msg to send payout to creator
-        */
         if !net_amount_after.is_zero() {
+            let priv_reward_amount = net_amount_after.mul(config.privilege_full_rewards);
+
+            // Send to creator
+            msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
+                msg: to_binary(&Cw20ExecuteMsg::Mint {
+                    recipient: deps.api.addr_humanize(&item.creator)?.to_string(),
+                    amount: priv_reward_amount,
+                })?,
+                funds: vec![],
+            }));
+
+            // Send to creator
+            msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
+                msg: to_binary(&Cw20ExecuteMsg::Mint {
+                    recipient: deps.api.addr_humanize(&recipient_address_raw)?.to_string(),
+                    amount: priv_reward_amount,
+                })?,
+                funds: vec![],
+            }));
+
+            /*
+                Prepare msg to send payout to creator
+            */
             msgs.push(CosmosMsg::Bank(BankMsg::Send {
                 to_address: deps.api.addr_humanize(&item.creator)?.to_string(),
                 amount: vec![deduct_tax(
@@ -1237,7 +1247,7 @@ mod tests {
     use crate::error::ContractError::MinBid;
     use crate::mock_querier::mock_dependencies_custom;
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MOCK_CONTRACT_ADDR};
-    use cosmwasm_std::{coins, from_binary, Api, Attribute, ReplyOn, StdError};
+    use cosmwasm_std::{coins, from_binary, Api, Attribute, Decimal, ReplyOn, StdError};
     use cw20::Cw20ExecuteMsg;
 
     #[test]
@@ -1253,6 +1263,8 @@ mod tests {
             bid_margin: 5,
             lota_fee: 5,
             lota_contract: "loterra".to_string(),
+            privilege_full_rewards: Uint128::from(10u128),
+            privilege_partial_rewards: Uint128::from(1u128),
         };
 
         // we can just call .unwrap() to assert this was a success
@@ -1268,6 +1280,8 @@ mod tests {
             bid_margin: 5,
             lota_fee: 5,
             lota_contract: "loterra".to_string(),
+            privilege_full_rewards: Uint128::from(10u128),
+            privilege_partial_rewards: Uint128::from(1u128),
         };
 
         let info = mock_info("creator", &vec![]);

@@ -1,4 +1,4 @@
-use cosmwasm_std::Uint128;
+use cosmwasm_std::{Decimal, Uint128};
 use cw20::Cw20ReceiveMsg;
 use cw721::Cw721ReceiveMsg;
 use schemars::JsonSchema;
@@ -12,6 +12,8 @@ pub struct InstantiateMsg {
     pub bid_margin: u8,
     pub lota_fee: u8,
     pub lota_contract: String,
+    pub privilege_full_rewards: Uint128,
+    pub privilege_partial_rewards: Uint128,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
