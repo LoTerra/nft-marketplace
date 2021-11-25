@@ -186,6 +186,11 @@ pub fn execute_register_private_sale(
         Some(item) => Ok(item),
     }?;
 
+    // Handle creator are not bidding
+    if item.creator == sender_raw {
+        return Err(ContractError::Unauthorized {});
+    }
+
     // Check if the auction have private sale
     match item.private_sale_privilege {
         None => Err(ContractError::Unauthorized {}),
