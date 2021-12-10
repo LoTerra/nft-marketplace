@@ -59,8 +59,8 @@ pub fn instantiate(
        Instantiate a cw20, privilege using this cw20 like private sale...
     */
     let msg_init = cw20_base::msg::InstantiateMsg {
-        name: "privilege".to_string(),
-        symbol: "PRIV".to_string(),
+        name: "rarifact".to_string(),
+        symbol: "CURIO".to_string(),
         decimals: 6,
         initial_balances: vec![],
         mint: Some(cw20::MinterResponse {
@@ -488,8 +488,9 @@ pub fn execute_withdraw_nft(
             },
         },
     };
-
+    let mut highest_bid_amount = Uint128::zero();
     if let Some(highest_bid) = item.highest_bid {
+        highest_bid_amount = highest_bid;
         net_amount_after = highest_bid;
         lota_fee_amount = net_amount_after.multiply_ratio(config.lota_fee, Uint128::from(100_u128));
         net_amount_after = net_amount_after.checked_sub(lota_fee_amount).unwrap();
@@ -530,8 +531,11 @@ pub fn execute_withdraw_nft(
     */
     // Send to winner and creator if exist
     if recipient_address_raw != item.creator {
-        if !net_amount_after.is_zero() {
+        if !highest_bid_amount.is_zero() {
             let priv_reward_amount = net_amount_after.mul(config.privilege_full_rewards);
+            /*
+                Prepare msg to mint rewards
+            */
 
             // Send to creator
             msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
@@ -552,7 +556,9 @@ pub fn execute_withdraw_nft(
                 })?,
                 funds: vec![],
             }));
+        }
 
+        if !net_amount_after.is_zero() {
             /*
                 Prepare msg to send payout to creator
             */
