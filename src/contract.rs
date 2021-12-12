@@ -532,7 +532,7 @@ pub fn execute_withdraw_nft(
     // Send to winner and creator if exist
     if recipient_address_raw != item.creator {
         if !highest_bid_amount.is_zero() {
-            let priv_reward_amount = net_amount_after.mul(config.privilege_full_rewards);
+            let priv_reward_amount = highest_bid_amount.mul(config.privilege_full_rewards);
             /*
                 Prepare msg to mint rewards
             */
