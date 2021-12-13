@@ -172,7 +172,7 @@ pub fn execute_receive_cw20(
 
 pub fn execute_register_private_sale(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     _info: MessageInfo,
     sender: String,
     sent: Uint128,
@@ -185,6 +185,14 @@ pub fn execute_register_private_sale(
         None => Err(ContractError::Unauthorized {}),
         Some(item) => Ok(item),
     }?;
+    // Verify if auction ended
+    if item.end_time < env.block.time.seconds() {
+        return Err(ContractError::EndTimeExpired {});
+    }
+    // Verify if auction is started
+    if item.start_time > env.block.time.seconds() {
+        return Err(ContractError::AuctionNotStarted {});
+    }
 
     // Handle creator are not bidding
     if item.creator == sender_raw {
