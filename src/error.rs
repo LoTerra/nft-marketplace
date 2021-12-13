@@ -41,6 +41,11 @@ pub enum ContractError {
 
     #[error("Use instant buy price {0}, you are trying to bid higher {1}")]
     UseInstantBuy(Uint128, Uint128),
+
+    #[error("Start price cannot be higher than {0}")]
+    StartPriceHigherThan(String),
+    #[error("Instant buy price cannot be lower than {0}")]
+    InstantBuyPriceLowerThan(String),
     // Add any other custom errors you like here.
     // Look at https://docs.rs/thiserror/1.0.21/thiserror/ for details.
 }

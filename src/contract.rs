@@ -59,8 +59,8 @@ pub fn instantiate(
        Instantiate a cw20, privilege using this cw20 like private sale...
     */
     let msg_init = cw20_base::msg::InstantiateMsg {
-        name: "rarifact".to_string(),
-        symbol: "CURIO".to_string(),
+        name: "curio".to_string(),
+        symbol: "SITY".to_string(),
         decimals: 6,
         initial_balances: vec![],
         mint: Some(cw20::MinterResponse {
@@ -285,12 +285,16 @@ pub fn execute_create_auction(
     if let Some(start_price_amount) = start_price {
         if let Some(instant_buy_amount) = instant_buy {
             if start_price_amount >= instant_buy_amount {
-                return Err(ContractError::Unauthorized {});
+                return Err(ContractError::StartPriceHigherThan(
+                    "instant buy".to_string(),
+                ));
             }
         }
         if let Some(reserve_price_amount) = reserve_price {
             if start_price_amount > reserve_price_amount {
-                return Err(ContractError::Unauthorized {});
+                return Err(ContractError::StartPriceHigherThan(
+                    "reserve price".to_string(),
+                ));
             }
         }
     }
@@ -320,7 +324,9 @@ pub fn execute_create_auction(
             }
             if let Some(reserve_price_amount) = reserve_price {
                 if instant_buy_price < reserve_price_amount {
-                    return Err(ContractError::Unauthorized {});
+                    return Err(ContractError::InstantBuyPriceLowerThan(
+                        "reserve price".to_string(),
+                    ));
                 }
             }
             Some(instant_buy_price)
@@ -1932,11 +1938,11 @@ mod tests {
     }
 
     #[test]
-    fn place_bid_auction_retire_bid_reserve_price_private_sale() {
+    fn place_bid_auction() {
         let mut deps = mock_dependencies_custom(&coins(2, "token"));
         init_default(deps.as_mut());
 
-        // ERROR create auction with end_time inferior current time
+        // Create auction with end_time inferior current time
         let env = mock_env();
         let execute_msg = create_msg_nft(
             None,
@@ -2146,7 +2152,7 @@ mod tests {
         assert_eq!(item.highest_bid, Some(Uint128::from(2205_u128)));
         assert_eq!(item.total_bids, 4);
 
-        // ERROR Alice try to retire bids
+        // ERROR Alice try to retire bids because she is the winner
         let msg = ExecuteMsg::RetractBids { auction_id: 1 };
         let res = execute(
             deps.as_mut(),
@@ -2182,20 +2188,76 @@ mod tests {
             msg.clone(),
         )
         .unwrap_err();
+    }
 
+    #[test]
+    fn withdraw_nft(){
+        let mut deps = mock_dependencies_custom(&coins(2, "token"));
+        init_default(deps.as_mut());
+
+        // Create auction with end_time
+        let mut env = mock_env();
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            None,
+        )
+            .unwrap();
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+            .unwrap();
+        /*
+            Place bid
+         */
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 0 };
+        let res = execute(deps.as_mut(), env.clone(), mock_info("alice", &vec![Coin{ denom: "uusd".to_string(), amount: Uint128::from(100u128) }]), execute_msg).unwrap();
+        //expire the auction
+        env.block.time = env.block.time.plus_seconds(2000);
         /*
            Withdraw NFT
         */
-        //  Withdraw NFT to winner or creator
-        let msg = ExecuteMsg::WithdrawNft { auction_id: 1 };
+
+        //  Withdraw NFT to winner
+        let msg = ExecuteMsg::WithdrawNft { auction_id: 0 };
         let res = execute(
             deps.as_mut(),
             env.clone(),
             mock_info("alice", &vec![]),
             msg.clone(),
         )
-        .unwrap();
-        println!("{:?}", res);
+            .unwrap();
+
+        let prepare_msg = cw721::Cw721ExecuteMsg::TransferNft { recipient: "alice".to_string(), token_id: "test".to_string() };
+        let message_one = WasmMsg::Execute {
+            contract_addr: "market".to_string(),
+            msg: to_binary(&prepare_msg).unwrap(),
+            funds: vec![]
+        };
+        let prepare_msg = cw20::Cw20ExecuteMsg::Mint { recipient: "sender".to_string(), amount: Uint128::from(10u128)};
+        let message_two = WasmMsg::Execute {
+            contract_addr: "cosmos2contract".to_string(),
+            msg: to_binary(&prepare_msg).unwrap(),
+            funds: vec![]
+        };
+        let prepare_msg = cw20::Cw20ExecuteMsg::Mint { recipient: "alice".to_string(), amount: Uint128::from(10u128)};
+        let message_three = WasmMsg::Execute {
+            contract_addr: "cosmos2contract".to_string(),
+            msg: to_binary(&prepare_msg).unwrap(),
+            funds: vec![]
+        };
+        let message_four = CosmosMsg::Bank(BankMsg::Send { to_address: "sender".to_string(), amount: vec![Coin{ denom: "uusd".to_string(), amount: Uint128::from(94u128) }] });
+        let message_five = CosmosMsg::Bank(BankMsg::Send { to_address: "loterra".to_string(), amount: vec![Coin{ denom: "uusd".to_string(), amount: Uint128::from(4u128) }] });
+        let all_msg = vec![SubMsg::new(message_one), SubMsg::new(message_two), SubMsg::new(message_three), SubMsg::new(message_four), SubMsg::new(message_five)];
+        assert_eq!(res.messages, all_msg);
+
 
         // Instantiate with start price 1000 ust
         let env = mock_env();
@@ -2208,14 +2270,14 @@ mod tests {
             None,
             None,
         )
-        .unwrap();
+            .unwrap();
         let res = execute(
             deps.as_mut(),
             env.clone(),
             mock_info("market", &vec![]),
             execute_msg,
         )
-        .unwrap();
+            .unwrap();
 
         let execute_msg = ExecuteMsg::PlaceBid { auction_id: 2 };
         // ERROR Alice bidding higher than instant buy
@@ -2231,7 +2293,7 @@ mod tests {
             ),
             execute_msg.clone(),
         )
-        .unwrap_err();
+            .unwrap_err();
 
         // Instantiate with start price 1000 ust
         let env = mock_env();
@@ -2244,14 +2306,14 @@ mod tests {
             None,
             Some(Uint128::from(10_000_u128)),
         )
-        .unwrap();
+            .unwrap();
         let res = execute(
             deps.as_mut(),
             env.clone(),
             mock_info("market", &vec![]),
             execute_msg,
         )
-        .unwrap();
+            .unwrap();
 
         let execute_msg = ExecuteMsg::PlaceBid { auction_id: 3 };
         // ERROR Private sale registration required
@@ -2267,7 +2329,7 @@ mod tests {
             ),
             execute_msg.clone(),
         )
-        .unwrap_err();
+            .unwrap_err();
         // Success Alice private sale registered
         let msg = ExecuteMsg::Receive(Cw20ReceiveMsg {
             sender: "alice".to_string(),
@@ -2285,7 +2347,7 @@ mod tests {
             ),
             msg.clone(),
         )
-        .unwrap();
+            .unwrap();
 
         // ERROR Register multiple time
         let res = execute(
@@ -2298,7 +2360,7 @@ mod tests {
             ),
             msg.clone(),
         )
-        .unwrap_err();
+            .unwrap_err();
 
         // ERROR Send less
         let msg = ExecuteMsg::Receive(Cw20ReceiveMsg {
@@ -2317,7 +2379,7 @@ mod tests {
             ),
             msg.clone(),
         )
-        .unwrap_err();
+            .unwrap_err();
 
         // ERROR Send more
         let msg = ExecuteMsg::Receive(Cw20ReceiveMsg {
@@ -2336,7 +2398,7 @@ mod tests {
             ),
             msg.clone(),
         )
-        .unwrap_err();
+            .unwrap_err();
 
         let alice_raw = deps.api.addr_canonicalize("alice").unwrap();
         let bid_alice = BIDS
@@ -2363,7 +2425,7 @@ mod tests {
             ),
             execute_msg.clone(),
         )
-        .unwrap();
+            .unwrap();
     }
     #[test]
     fn creator_withdraw_nft() {
