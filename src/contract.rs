@@ -38,14 +38,19 @@ pub fn instantiate(
         bid_margin: msg.bid_margin,
         lota_fee: msg.lota_fee,
         lota_contract: deps.api.addr_canonicalize(&msg.lota_contract)?,
-        privilege_full_rewards: Decimal::from_ratio(
-            Uint128::from(msg.privilege_full_rewards),
+        sity_full_rewards: Decimal::from_ratio(
+            Uint128::from(msg.sity_full_rewards),
             Uint128::from(100u128),
         ),
-        privilege_partial_rewards: Decimal::from_ratio(
-            Uint128::from(msg.privilege_partial_rewards),
+        sity_partial_rewards: Decimal::from_ratio(
+            Uint128::from(msg.sity_partial_rewards),
             Uint128::from(100u128),
         ),
+        sity_fee_registration: Decimal::from_ratio(
+            Uint128::from(msg.sity_fee_registration),
+            Uint128::from(100u128),
+        ),
+        sity_min_opening: msg.sity_min_opening,
     };
 
     CONFIG.save(deps.storage, &config)?;
@@ -124,7 +129,7 @@ pub fn execute_receive_cw721(
             charity,
             instant_buy,
             reserve_price,
-            private_sale_privilege,
+            private_sale,
         } => execute_create_auction(
             deps,
             env,
@@ -137,7 +142,7 @@ pub fn execute_receive_cw721(
             charity,
             instant_buy,
             reserve_price,
-            private_sale_privilege,
+            private_sale,
         ),
         _ => Err(ContractError::Unauthorized {}),
     }
@@ -179,8 +184,10 @@ pub fn execute_register_private_sale(
     auction_id: u64,
 ) -> Result<Response, ContractError> {
     let state = STATE.load(deps.storage)?;
+    let config = CONFIG.load(deps.storage)?;
     let sender_raw = deps.api.addr_canonicalize(sender.as_ref())?;
 
+    // Verify if the auction id exist
     let item = match ITEMS.may_load(deps.storage, &auction_id.to_be_bytes())? {
         None => Err(ContractError::Unauthorized {}),
         Some(item) => Ok(item),
@@ -189,7 +196,7 @@ pub fn execute_register_private_sale(
     if item.end_time < env.block.time.seconds() {
         return Err(ContractError::EndTimeExpired {});
     }
-    // Verify if auction is started
+    // Verify if auction is scheduled to start
     if item.start_time > env.block.time.seconds() {
         return Err(ContractError::AuctionNotStarted {});
     }
@@ -199,16 +206,22 @@ pub fn execute_register_private_sale(
         return Err(ContractError::Unauthorized {});
     }
 
-    // Check if the auction have private sale
-    match item.private_sale_privilege {
-        None => Err(ContractError::Unauthorized {}),
-        Some(amount) => {
-            if amount != sent {
-                return Err(ContractError::Unauthorized {});
-            }
-            Ok(())
+    // Check if the auction have private sale and check if the amount sent is valid
+    if item.private_sale {
+        // Private sale detected
+        // Calculate SITY requirement
+        let sity_required = match item.highest_bid {
+            None => config.sity_min_opening,
+            Some(highest_bid) => highest_bid.mul(config.sity_fee_registration),
+        };
+        // Verify the amount is correct
+        if sity_required != sent {
+            return Err(ContractError::PrivateSaleRestriction(sity_required));
         }
-    }?;
+    } else {
+        // No private sale detected
+        return Err(ContractError::Unauthorized {});
+    }
 
     // Check if existing bid return error
     match BIDS.may_load(
@@ -226,7 +239,7 @@ pub fn execute_register_private_sale(
         &BidInfo {
             bid_counter: 0,
             total_bid: Uint128::zero(),
-            privilege_used: Some(sent),
+            sity_used: Some(sent),
             resolved: false,
         },
     )?;
@@ -260,7 +273,7 @@ pub fn execute_create_auction(
     charity: Option<CharityResponse>,
     instant_buy: Option<Uint128>,
     reserve_price: Option<Uint128>,
-    private_sale_privilege: Option<Uint128>,
+    private_sale: bool,
 ) -> Result<Response, ContractError> {
     let mut state = STATE.load(deps.storage)?;
 
@@ -341,17 +354,6 @@ pub fn execute_create_auction(
         }
     };
 
-    // Validate private price
-    let private_sale_price = match private_sale_privilege {
-        None => None,
-        Some(price) => {
-            if price.is_zero() {
-                return Err(ContractError::ZeroNotValid {});
-            }
-            Some(price)
-        }
-    };
-
     ITEMS.save(
         deps.storage,
         &state.counter_items.to_be_bytes(),
@@ -368,7 +370,7 @@ pub fn execute_create_auction(
             charity: valid_charity,
             instant_buy: instant_buy_price,
             reserve_price,
-            private_sale_privilege: private_sale_price,
+            private_sale,
             resolved: false,
         },
     )?;
@@ -385,7 +387,8 @@ pub fn execute_create_auction(
         .add_attribute(
             "auction_id",
             state.counter_items.checked_sub(1).unwrap().to_string(),
-        );
+        )
+        .add_attribute("private_sale", private_sale.to_string());
     Ok(res)
 }
 
@@ -441,7 +444,7 @@ pub fn execute_retract_bids(
     let mut msgs = vec![bank_msg];
 
     if !bid.resolved {
-        let priv_reward_amount = bid.total_bid.mul(config.privilege_partial_rewards);
+        let priv_reward_amount = bid.total_bid.mul(config.sity_partial_rewards);
         let privilege_msg = Cw20ExecuteMsg::Mint {
             recipient: info.sender.to_string(),
             amount: priv_reward_amount,
@@ -506,7 +509,11 @@ pub fn execute_withdraw_nft(
     if let Some(highest_bid) = item.highest_bid {
         highest_bid_amount = highest_bid;
         net_amount_after = highest_bid;
-        lota_fee_amount = net_amount_after.multiply_ratio(config.lota_fee, Uint128::from(100_u128));
+        // Apply fee only if it is not a private sale
+        if !item.private_sale {
+            lota_fee_amount =
+                net_amount_after.multiply_ratio(config.lota_fee, Uint128::from(100_u128));
+        }
         net_amount_after = net_amount_after.checked_sub(lota_fee_amount).unwrap();
         if let Some(charity) = item.charity {
             charity_amount =
@@ -546,7 +553,7 @@ pub fn execute_withdraw_nft(
     // Send to winner and creator if exist
     if recipient_address_raw != item.creator {
         if !highest_bid_amount.is_zero() {
-            let priv_reward_amount = highest_bid_amount.mul(config.privilege_full_rewards);
+            let priv_reward_amount = highest_bid_amount.mul(config.sity_full_rewards);
             /*
                 Prepare msg to mint rewards
             */
@@ -672,23 +679,24 @@ pub fn execute_place_bid(
         return Err(ContractError::Unauthorized {});
     }
 
-    match item.private_sale_privilege {
-        None => Ok(()),
-        Some(amount_required) => {
-            match BIDS.may_load(
-                deps.storage,
-                (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-            )? {
-                None => Err(ContractError::PrivateSaleRestriction(amount_required)),
-                Some(bid) => {
-                    if amount_required != bid.privilege_used.unwrap_or_default() {
-                        return Err(ContractError::PrivateSaleRestriction(amount_required));
-                    }
-                    Ok(())
-                }
+    if item.private_sale {
+        // Calculate SITY requirement
+        let sity_required = match item.highest_bid {
+            None => config.sity_min_opening,
+            Some(highest_bid) => highest_bid.mul(config.sity_fee_registration),
+        };
+
+        // Check if already registered
+        match BIDS.may_load(
+            deps.storage,
+            (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+        )? {
+            None => {
+                return Err(ContractError::PrivateSaleRestriction(sity_required));
             }
-        }
-    }?;
+            _ => {}
+        };
+    }
 
     let current_bid = match item.start_price {
         None => item.highest_bid.unwrap_or_default(),
@@ -754,7 +762,7 @@ pub fn execute_place_bid(
             &BidInfo {
                 bid_counter: 1,
                 total_bid: sent,
-                privilege_used: None,
+                sity_used: None,
                 resolved: false,
             },
         )?,
@@ -869,14 +877,22 @@ pub fn execute_instant_buy(
         return Err(ContractError::Unauthorized {});
     }
 
-    if let Some(private_amount) = item.private_sale_privilege {
-        let bids = BIDS.load(
+    if item.private_sale {
+        // Calculate SITY requirement
+        let sity_required = match item.highest_bid {
+            None => config.sity_min_opening,
+            Some(highest_bid) => highest_bid.mul(config.sity_fee_registration),
+        };
+        // Check if already registered
+        match BIDS.may_load(
             deps.storage,
             (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-        )?;
-        if bids.privilege_used.unwrap_or_default() != private_amount {
-            return Err(ContractError::Unauthorized {});
-        }
+        )? {
+            None => {
+                return Err(ContractError::PrivateSaleRestriction(sity_required));
+            }
+            _ => {}
+        };
     }
 
     let sent = match info.funds.len() {
@@ -901,7 +917,7 @@ pub fn execute_instant_buy(
             &BidInfo {
                 bid_counter: 1,
                 total_bid: sent,
-                privilege_used: None,
+                sity_used: None,
                 resolved: false,
             },
         )?,
@@ -1130,7 +1146,7 @@ fn query_all_auctions(
                         charity,
                         instant_buy: item.instant_buy,
                         reserve_price: item.reserve_price,
-                        private_sale_privilege: item.private_sale_privilege,
+                        private_sale: item.private_sale,
                         resolved: item.resolved,
                     },
                 ))
@@ -1243,7 +1259,7 @@ fn query_auction(deps: Deps, _env: Env, auction_id: u64) -> StdResult<AuctionRes
         charity,
         instant_buy: item.instant_buy,
         reserve_price: item.reserve_price,
-        private_sale_privilege: item.private_sale_privilege,
+        private_sale: item.private_sale,
         resolved: item.resolved,
     })
 }
@@ -1261,7 +1277,7 @@ fn query_bidder(deps: Deps, _env: Env, auction_id: u64, address: String) -> StdR
     Ok(BidResponse {
         bid_counter: bid.bid_counter,
         total_bid: bid.total_bid,
-        privilege_used: bid.privilege_used,
+        sity_used: bid.sity_used,
     })
 }
 
@@ -1288,8 +1304,10 @@ mod tests {
             bid_margin: 5,
             lota_fee: 5,
             lota_contract: "loterra".to_string(),
-            privilege_full_rewards: Uint128::from(10u128),
-            privilege_partial_rewards: Uint128::from(1u128),
+            sity_full_rewards: Uint128::from(10u128),
+            sity_partial_rewards: Uint128::from(1u128),
+            sity_fee_registration: Uint128::from(2u128),
+            sity_min_opening: Uint128::from(1_000_000u128),
         };
 
         // we can just call .unwrap() to assert this was a success
@@ -1305,8 +1323,10 @@ mod tests {
             bid_margin: 5,
             lota_fee: 5,
             lota_contract: "loterra".to_string(),
-            privilege_full_rewards: Uint128::from(10u128),
-            privilege_partial_rewards: Uint128::from(1u128),
+            sity_full_rewards: Uint128::from(10u128),
+            sity_partial_rewards: Uint128::from(1u128),
+            sity_fee_registration: Uint128::from(2u128),
+            sity_min_opening: Uint128::from(1_000_000u128),
         };
 
         let info = mock_info("creator", &vec![]);
@@ -1320,7 +1340,7 @@ mod tests {
         charity: Option<CharityResponse>,
         instant_buy: Option<Uint128>,
         reserve_price: Option<Uint128>,
-        private_sale_privilege: Option<Uint128>,
+        private_sale: bool,
     ) -> Result<ExecuteMsg, ContractError> {
         let msg = ReceiveMsg::CreateAuctionNft {
             start_price,
@@ -1329,7 +1349,7 @@ mod tests {
             charity,
             instant_buy,
             reserve_price,
-            private_sale_privilege,
+            private_sale,
         };
         let send_msg = cw721::Cw721ReceiveMsg {
             sender: "sender".to_string(),
@@ -1345,7 +1365,7 @@ mod tests {
         init_default(deps.as_mut());
 
         // ERROR create auction with end_time inferior current time
-        let execute_msg = create_msg_nft(None, None, 0, None, None, None, None).unwrap();
+        let execute_msg = create_msg_nft(None, None, 0, None, None, None, false).unwrap();
         let res = execute(
             deps.as_mut(),
             mock_env(),
@@ -1363,7 +1383,7 @@ mod tests {
             None,
             None,
             None,
-            None,
+            false,
         )
         .unwrap();
         let res = execute(
@@ -1386,7 +1406,7 @@ mod tests {
             }),
             None,
             None,
-            None,
+            false,
         )
         .unwrap();
 
@@ -1407,7 +1427,7 @@ mod tests {
             None,
             None,
             None,
-            None,
+            false,
         )
         .unwrap();
         let res = execute(
@@ -1433,7 +1453,7 @@ mod tests {
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, None);
         assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
-        assert_eq!(item.private_sale_privilege, None);
+        assert_eq!(item.private_sale, false);
         assert_eq!(item.total_bids, 0);
         assert_eq!(item.instant_buy, None);
         assert_eq!(item.charity, None);
@@ -1470,6 +1490,10 @@ mod tests {
                 Attribute {
                     key: "auction_id".to_string(),
                     value: "0".to_string()
+                },
+                Attribute {
+                    key: "private_sale".to_string(),
+                    value: false.to_string()
                 }
             ]
         );
@@ -1483,7 +1507,7 @@ mod tests {
             None,
             None,
             None,
-            None,
+            false,
         )
         .unwrap();
         let res = execute(
@@ -1509,7 +1533,7 @@ mod tests {
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, None);
         assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
-        assert_eq!(item.private_sale_privilege, None);
+        assert_eq!(item.private_sale, false);
         assert_eq!(item.total_bids, 0);
         assert_eq!(item.instant_buy, None);
         assert_eq!(item.charity, None);
@@ -1545,6 +1569,10 @@ mod tests {
                 Attribute {
                     key: "auction_id".to_string(),
                     value: "1".to_string()
+                },
+                Attribute {
+                    key: "private_sale".to_string(),
+                    value: false.to_string()
                 }
             ]
         );
@@ -1558,7 +1586,7 @@ mod tests {
             None,
             None,
             None,
-            None,
+            false,
         )
         .unwrap();
         let res = execute(
@@ -1584,7 +1612,7 @@ mod tests {
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, None);
         assert_eq!(item.end_time, env.block.time.plus_seconds(5000).seconds());
-        assert_eq!(item.private_sale_privilege, None);
+        assert_eq!(item.private_sale, false);
         assert_eq!(item.total_bids, 0);
         assert_eq!(item.instant_buy, None);
         assert_eq!(item.charity, None);
@@ -1620,6 +1648,10 @@ mod tests {
                 Attribute {
                     key: "auction_id".to_string(),
                     value: "2".to_string()
+                },
+                Attribute {
+                    key: "private_sale".to_string(),
+                    value: false.to_string()
                 }
             ]
         );
@@ -1633,7 +1665,7 @@ mod tests {
             None,
             Some(Uint128::from(1000_u128)),
             None,
-            None,
+            false,
         )
         .unwrap();
         let res = execute(
@@ -1659,7 +1691,7 @@ mod tests {
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, None);
         assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
-        assert_eq!(item.private_sale_privilege, None);
+        assert_eq!(item.private_sale, false);
         assert_eq!(item.total_bids, 0);
         assert_eq!(item.instant_buy, Some(Uint128::from(1000_u128)));
         assert_eq!(item.charity, None);
@@ -1695,6 +1727,10 @@ mod tests {
                 Attribute {
                     key: "auction_id".to_string(),
                     value: "3".to_string()
+                },
+                Attribute {
+                    key: "private_sale".to_string(),
+                    value: false.to_string()
                 }
             ]
         );
@@ -1708,7 +1744,7 @@ mod tests {
             None,
             None,
             Some(Uint128::from(1000_u128)),
-            None,
+            false,
         )
         .unwrap();
         let res = execute(
@@ -1734,7 +1770,7 @@ mod tests {
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, Some(Uint128::from(1000_u128)));
         assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
-        assert_eq!(item.private_sale_privilege, None);
+        assert_eq!(item.private_sale, false);
         assert_eq!(item.total_bids, 0);
         assert_eq!(item.instant_buy, None);
         assert_eq!(item.charity, None);
@@ -1770,6 +1806,10 @@ mod tests {
                 Attribute {
                     key: "auction_id".to_string(),
                     value: "4".to_string()
+                },
+                Attribute {
+                    key: "private_sale".to_string(),
+                    value: false.to_string()
                 }
             ]
         );
@@ -1783,7 +1823,7 @@ mod tests {
             None,
             None,
             None,
-            Some(Uint128::from(1000_u128)),
+            true,
         )
         .unwrap();
         let res = execute(
@@ -1809,7 +1849,7 @@ mod tests {
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, None);
         assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
-        assert_eq!(item.private_sale_privilege, Some(Uint128::from(1000_u128)));
+        assert_eq!(item.private_sale, true);
         assert_eq!(item.total_bids, 0);
         assert_eq!(item.instant_buy, None);
         assert_eq!(item.charity, None);
@@ -1845,6 +1885,10 @@ mod tests {
                 Attribute {
                     key: "auction_id".to_string(),
                     value: "5".to_string()
+                },
+                Attribute {
+                    key: "private_sale".to_string(),
+                    value: true.to_string()
                 }
             ]
         );
@@ -1861,7 +1905,7 @@ mod tests {
             }),
             None,
             None,
-            None,
+            false,
         )
         .unwrap();
 
@@ -1888,7 +1932,7 @@ mod tests {
         assert_eq!(item.highest_bidder, None);
         assert_eq!(item.reserve_price, None);
         assert_eq!(item.end_time, env.block.time.plus_seconds(1000).seconds());
-        assert_eq!(item.private_sale_privilege, None);
+        assert_eq!(item.private_sale, false);
         assert_eq!(item.total_bids, 0);
         assert_eq!(item.instant_buy, None);
         assert_eq!(
@@ -1933,6 +1977,10 @@ mod tests {
                 Attribute {
                     key: "auction_id".to_string(),
                     value: "6".to_string()
+                },
+                Attribute {
+                    key: "private_sale".to_string(),
+                    value: false.to_string()
                 }
             ]
         );
@@ -1959,7 +2007,7 @@ mod tests {
             None,
             None,
             None,
-            None,
+            false,
         )
         .unwrap();
         let res = execute(
@@ -2005,7 +2053,7 @@ mod tests {
             None,
             None,
             None,
-            None,
+            false,
         )
         .unwrap();
         let res = execute(
@@ -2140,7 +2188,7 @@ mod tests {
             .unwrap();
         assert_eq!(bid_alice.total_bid, Uint128::from(2205_u128));
         assert_eq!(bid_alice.bid_counter, 2);
-        assert_eq!(bid_alice.privilege_used, None);
+        assert_eq!(bid_alice.sity_used, None);
 
         let bob_raw = deps.api.addr_canonicalize("bob").unwrap();
         let bid_bob = BIDS
@@ -2151,7 +2199,7 @@ mod tests {
             .unwrap();
         assert_eq!(bid_bob.total_bid, Uint128::from(2000_u128));
         assert_eq!(bid_bob.bid_counter, 1);
-        assert_eq!(bid_bob.privilege_used, None);
+        assert_eq!(bid_bob.sity_used, None);
 
         let item = ITEMS
             .load(deps.as_ref().storage, &1_u64.to_be_bytes())
@@ -2212,7 +2260,7 @@ mod tests {
             None,
             None,
             None,
-            None,
+            false,
         )
         .unwrap();
         let res = execute(
@@ -2314,7 +2362,7 @@ mod tests {
             None,
             Some(Uint128::from(10_000_u128)),
             None,
-            None,
+            false,
         )
         .unwrap();
         let res = execute(
@@ -2325,7 +2373,7 @@ mod tests {
         )
         .unwrap();
 
-        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 2 };
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 1 };
         // ERROR Alice bidding higher than instant buy
         let res = execute(
             deps.as_mut(),
@@ -2350,7 +2398,7 @@ mod tests {
             None,
             None,
             None,
-            Some(Uint128::from(10_000_u128)),
+            true,
         )
         .unwrap();
         let res = execute(
@@ -2361,9 +2409,9 @@ mod tests {
         )
         .unwrap();
 
-        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 3 };
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 2 };
         // ERROR Private sale registration required
-        let res = execute(
+        let err = execute(
             deps.as_mut(),
             env.clone(),
             mock_info(
@@ -2376,11 +2424,16 @@ mod tests {
             execute_msg.clone(),
         )
         .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::PrivateSaleRestriction(Uint128::from(1_000_000u128))
+        );
+
         // Success Alice private sale registered
         let msg = ExecuteMsg::Receive(Cw20ReceiveMsg {
             sender: "alice".to_string(),
-            amount: Uint128::from(10_000u128),
-            msg: to_binary(&ReceiveMsg::RegisterPrivateSale { auction_id: 3 }).unwrap(),
+            amount: Uint128::from(1_000_000u128),
+            msg: to_binary(&ReceiveMsg::RegisterPrivateSale { auction_id: 2 }).unwrap(),
         });
 
         let res = execute(
@@ -2395,8 +2448,20 @@ mod tests {
         )
         .unwrap();
 
+        let mut all_vecs = vec![];
+        let prepare_burn = cw20::Cw20ExecuteMsg::Burn {
+            amount: Uint128::from(1_000_000u128),
+        };
+        let exec_burn = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: "cosmos2contract".to_string(),
+            msg: to_binary(&prepare_burn).unwrap(),
+            funds: vec![],
+        });
+        all_vecs.push(SubMsg::new(exec_burn));
+        assert_eq!(res.messages, all_vecs);
+
         // ERROR Register multiple time
-        let res = execute(
+        let err = execute(
             deps.as_mut(),
             env.clone(),
             mock_info(
@@ -2407,15 +2472,32 @@ mod tests {
             msg.clone(),
         )
         .unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized {});
+
+        // ALICE place a bid
+        let message_bid = ExecuteMsg::PlaceBid { auction_id: 2 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "alice",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(1_545_000_000u128),
+                }],
+            ),
+            message_bid,
+        )
+        .unwrap();
 
         // ERROR Send less
         let msg = ExecuteMsg::Receive(Cw20ReceiveMsg {
             sender: "bob".to_string(),
             amount: Uint128::from(5_000u128),
-            msg: to_binary(&ReceiveMsg::RegisterPrivateSale { auction_id: 3 }).unwrap(),
+            msg: to_binary(&ReceiveMsg::RegisterPrivateSale { auction_id: 2 }).unwrap(),
         });
 
-        let res = execute(
+        let err = execute(
             deps.as_mut(),
             env.clone(),
             mock_info(
@@ -2426,15 +2508,19 @@ mod tests {
             msg.clone(),
         )
         .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::PrivateSaleRestriction(Uint128::from(30_900_000u128))
+        );
 
         // ERROR Send more
         let msg = ExecuteMsg::Receive(Cw20ReceiveMsg {
             sender: "bob".to_string(),
-            amount: Uint128::from(5_000u128),
-            msg: to_binary(&ReceiveMsg::RegisterPrivateSale { auction_id: 3 }).unwrap(),
+            amount: Uint128::from(31_900_000u128),
+            msg: to_binary(&ReceiveMsg::RegisterPrivateSale { auction_id: 2 }).unwrap(),
         });
 
-        let res = execute(
+        let err = execute(
             deps.as_mut(),
             env.clone(),
             mock_info(
@@ -2445,19 +2531,10 @@ mod tests {
             msg.clone(),
         )
         .unwrap_err();
-
-        let alice_raw = deps.api.addr_canonicalize("alice").unwrap();
-        let bid_alice = BIDS
-            .update(
-                deps.as_mut().storage,
-                (&3_u64.to_be_bytes(), &alice_raw.as_slice()),
-                |bid| -> StdResult<_> {
-                    let mut update_bid = bid.unwrap();
-                    update_bid.privilege_used = Some(Uint128::from(10_000u128));
-                    Ok(update_bid)
-                },
-            )
-            .unwrap();
+        assert_eq!(
+            err,
+            ContractError::PrivateSaleRestriction(Uint128::from(30_900_000u128))
+        );
 
         let res = execute(
             deps.as_mut(),
@@ -2466,12 +2543,73 @@ mod tests {
                 "alice",
                 &vec![Coin {
                     denom: "uusd".to_string(),
-                    amount: Uint128::from(1_000_u128),
+                    amount: Uint128::from(145_000_000u128),
                 }],
             ),
             execute_msg.clone(),
         )
         .unwrap();
+
+        //expire the auction
+        let mut env = mock_env();
+        env.block.time = env.block.time.plus_seconds(200000);
+        /*
+           Withdraw NFT
+        */
+
+        //  Withdraw NFT to winner
+        let msg = ExecuteMsg::WithdrawNft { auction_id: 2 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("bob", &vec![]),
+            msg.clone(),
+        )
+        .unwrap();
+        let prepare_msg = cw721::Cw721ExecuteMsg::TransferNft {
+            recipient: "alice".to_string(),
+            token_id: "test".to_string(),
+        };
+        let message_one = WasmMsg::Execute {
+            contract_addr: "market".to_string(),
+            msg: to_binary(&prepare_msg).unwrap(),
+            funds: vec![],
+        };
+        let prepare_msg = cw20::Cw20ExecuteMsg::Mint {
+            recipient: "sender".to_string(),
+            amount: Uint128::from(169_000_000u128),
+        };
+        let message_two = WasmMsg::Execute {
+            contract_addr: "cosmos2contract".to_string(),
+            msg: to_binary(&prepare_msg).unwrap(),
+            funds: vec![],
+        };
+        let prepare_msg = cw20::Cw20ExecuteMsg::Mint {
+            recipient: "alice".to_string(),
+            amount: Uint128::from(169_000_000u128),
+        };
+        let message_three = WasmMsg::Execute {
+            contract_addr: "cosmos2contract".to_string(),
+            msg: to_binary(&prepare_msg).unwrap(),
+            funds: vec![],
+        };
+        let message_four = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "sender".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(1_689_000_000u128),
+            }],
+        });
+
+        let all_msg = vec![
+            SubMsg::new(message_one),
+            SubMsg::new(message_two),
+            SubMsg::new(message_three),
+            SubMsg::new(message_four),
+        ];
+        assert_eq!(res.messages, all_msg);
+
+        println!("{:?}", res);
     }
     #[test]
     fn creator_withdraw_nft() {
@@ -2489,7 +2627,7 @@ mod tests {
             None,
             None,
             None,
-            None,
+            false,
         )
         .unwrap();
         let res = execute(
@@ -2550,7 +2688,7 @@ mod tests {
             None,
             Some(Uint128::from(1_000u128)),
             None,
-            None,
+            false,
         )
         .unwrap();
         let res = execute(

@@ -1,7 +1,7 @@
 use cosmwasm_std::{StdError, Uint128};
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum ContractError {
     #[error("{0}")]
     Std(#[from] StdError),
@@ -36,7 +36,7 @@ pub enum ContractError {
     #[error("Min bid amount is {0}, your total sent with this current amount is {1}")]
     MinBid(Uint128, Uint128),
 
-    #[error("Registration amount required {0} PRIV token, please register first")]
+    #[error("Registration amount required {0} SITY token, please register first")]
     PrivateSaleRestriction(Uint128),
 
     #[error("Use instant buy price {0}, you are trying to bid higher {1}")]
