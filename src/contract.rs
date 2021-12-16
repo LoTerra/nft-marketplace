@@ -1271,14 +1271,19 @@ fn query_bidder(deps: Deps, _env: Env, auction_id: u64, address: String) -> StdR
             deps.api.addr_canonicalize(&address)?.as_slice(),
         ),
     )? {
-        None => Err(StdError::generic_err("Not found")),
-        Some(bid) => Ok(bid),
-    }?;
-    Ok(BidResponse {
-        bid_counter: bid.bid_counter,
-        total_bid: bid.total_bid,
-        sity_used: bid.sity_used,
-    })
+        None => BidResponse {
+            bid_counter: 0,
+            total_bid: Uint128::zero(),
+            sity_used: None,
+        },
+        Some(bid) => BidResponse {
+            bid_counter: bid.bid_counter,
+            total_bid: bid.total_bid,
+            sity_used: bid.sity_used,
+        },
+    };
+
+    Ok(bid)
 }
 
 #[cfg(test)]

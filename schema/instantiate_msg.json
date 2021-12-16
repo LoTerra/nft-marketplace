@@ -9,8 +9,10 @@
     "denom",
     "lota_contract",
     "lota_fee",
-    "privilege_full_rewards",
-    "privilege_partial_rewards"
+    "sity_fee_registration",
+    "sity_full_rewards",
+    "sity_min_opening",
+    "sity_partial_rewards"
   ],
   "properties": {
     "bid_margin": {
@@ -37,10 +39,16 @@
       "format": "uint8",
       "minimum": 0.0
     },
-    "privilege_full_rewards": {
+    "sity_fee_registration": {
       "$ref": "#/definitions/Uint128"
     },
-    "privilege_partial_rewards": {
+    "sity_full_rewards": {
+      "$ref": "#/definitions/Uint128"
+    },
+    "sity_min_opening": {
+      "$ref": "#/definitions/Uint128"
+    },
+    "sity_partial_rewards": {
       "$ref": "#/definitions/Uint128"
     }
   },

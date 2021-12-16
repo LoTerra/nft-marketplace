@@ -12,7 +12,7 @@
       "format": "uint64",
       "minimum": 0.0
     },
-    "privilege_used": {
+    "sity_used": {
       "anyOf": [
         {
           "$ref": "#/definitions/Uint128"

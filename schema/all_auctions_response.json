@@ -33,6 +33,7 @@
         "end_time",
         "nft_contract",
         "nft_id",
+        "private_sale",
         "resolved",
         "start_time",
         "total_bids"
@@ -88,15 +89,8 @@
         "nft_id": {
           "type": "string"
         },
-        "private_sale_privilege": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/Uint128"
-            },
-            {
-              "type": "null"
-            }
-          ]
+        "private_sale": {
+          "type": "boolean"
         },
         "reserve_price": {
           "anyOf": [
