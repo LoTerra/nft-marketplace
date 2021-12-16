@@ -509,7 +509,11 @@ pub fn execute_withdraw_nft(
     if let Some(highest_bid) = item.highest_bid {
         highest_bid_amount = highest_bid;
         net_amount_after = highest_bid;
-        lota_fee_amount = net_amount_after.multiply_ratio(config.lota_fee, Uint128::from(100_u128));
+        // Apply fee only if it is not a private sale
+        if !item.private_sale {
+            lota_fee_amount =
+                net_amount_after.multiply_ratio(config.lota_fee, Uint128::from(100_u128));
+        }
         net_amount_after = net_amount_after.checked_sub(lota_fee_amount).unwrap();
         if let Some(charity) = item.charity {
             charity_amount =
@@ -2562,6 +2566,48 @@ mod tests {
             msg.clone(),
         )
         .unwrap();
+        let prepare_msg = cw721::Cw721ExecuteMsg::TransferNft {
+            recipient: "alice".to_string(),
+            token_id: "test".to_string(),
+        };
+        let message_one = WasmMsg::Execute {
+            contract_addr: "market".to_string(),
+            msg: to_binary(&prepare_msg).unwrap(),
+            funds: vec![],
+        };
+        let prepare_msg = cw20::Cw20ExecuteMsg::Mint {
+            recipient: "sender".to_string(),
+            amount: Uint128::from(169_000_000u128),
+        };
+        let message_two = WasmMsg::Execute {
+            contract_addr: "cosmos2contract".to_string(),
+            msg: to_binary(&prepare_msg).unwrap(),
+            funds: vec![],
+        };
+        let prepare_msg = cw20::Cw20ExecuteMsg::Mint {
+            recipient: "alice".to_string(),
+            amount: Uint128::from(169_000_000u128),
+        };
+        let message_three = WasmMsg::Execute {
+            contract_addr: "cosmos2contract".to_string(),
+            msg: to_binary(&prepare_msg).unwrap(),
+            funds: vec![],
+        };
+        let message_four = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "sender".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(1_689_000_000u128),
+            }],
+        });
+
+        let all_msg = vec![
+            SubMsg::new(message_one),
+            SubMsg::new(message_two),
+            SubMsg::new(message_three),
+            SubMsg::new(message_four),
+        ];
+        assert_eq!(res.messages, all_msg);
 
         println!("{:?}", res);
     }
