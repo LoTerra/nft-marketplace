@@ -38,16 +38,10 @@ pub fn instantiate(
         bid_margin: msg.bid_margin,
         lota_fee: msg.lota_fee,
         lota_contract: deps.api.addr_canonicalize(&msg.lota_contract)?,
-        sity_full_rewards: Decimal::from_ratio(
-            Uint128::from(msg.sity_full_rewards),
-            Uint128::from(100u128),
-        ),
-        sity_partial_rewards: Decimal::from_ratio(
-            Uint128::from(msg.sity_partial_rewards),
-            Uint128::from(100u128),
-        ),
+        sity_full_rewards: Decimal::from_ratio(msg.sity_full_rewards, Uint128::from(100u128)),
+        sity_partial_rewards: Decimal::from_ratio(msg.sity_partial_rewards, Uint128::from(100u128)),
         sity_fee_registration: Decimal::from_ratio(
-            Uint128::from(msg.sity_fee_registration),
+            msg.sity_fee_registration,
             Uint128::from(100u128),
         ),
         sity_min_opening: msg.sity_min_opening,
@@ -687,14 +681,12 @@ pub fn execute_place_bid(
         };
 
         // Check if already registered
-        match BIDS.may_load(
+        if BIDS.may_load(
             deps.storage,
             (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-        )? {
-            None => {
-                return Err(ContractError::PrivateSaleRestriction(sity_required));
-            }
-            _ => {}
+        )? == None
+        {
+            return Err(ContractError::PrivateSaleRestriction(sity_required));
         };
     }
 
@@ -883,15 +875,12 @@ pub fn execute_instant_buy(
             None => config.sity_min_opening,
             Some(highest_bid) => highest_bid.mul(config.sity_fee_registration),
         };
-        // Check if already registered
-        match BIDS.may_load(
+        if BIDS.may_load(
             deps.storage,
             (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-        )? {
-            None => {
-                return Err(ContractError::PrivateSaleRestriction(sity_required));
-            }
-            _ => {}
+        )? == None
+        {
+            return Err(ContractError::PrivateSaleRestriction(sity_required));
         };
     }
 
