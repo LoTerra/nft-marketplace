@@ -10,8 +10,10 @@ pub struct Config {
     pub bid_margin: u8,
     pub lota_fee: u8,
     pub lota_contract: CanonicalAddr,
-    pub privilege_full_rewards: Decimal,
-    pub privilege_partial_rewards: Decimal,
+    pub sity_full_rewards: Decimal,
+    pub sity_partial_rewards: Decimal,
+    pub sity_fee_registration: Decimal,
+    pub sity_min_opening: Uint128,
 }
 pub const CONFIG: Item<Config> = Item::new("config");
 
@@ -46,7 +48,7 @@ pub struct ItemInfo {
     pub charity: Option<CharityInfo>,
     pub instant_buy: Option<Uint128>,
     pub reserve_price: Option<Uint128>,
-    pub private_sale_privilege: Option<Uint128>,
+    pub private_sale: bool,
     pub resolved: bool,
 }
 
@@ -56,7 +58,7 @@ pub const ITEMS: Map<&[u8], ItemInfo> = Map::new("items");
 pub struct BidInfo {
     pub bid_counter: u64,
     pub total_bid: Uint128,
-    pub privilege_used: Option<Uint128>,
+    pub sity_used: Option<Uint128>,
     pub resolved: bool,
 }
 

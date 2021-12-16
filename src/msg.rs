@@ -12,8 +12,10 @@ pub struct InstantiateMsg {
     pub bid_margin: u8,
     pub lota_fee: u8,
     pub lota_contract: String,
-    pub privilege_full_rewards: Uint128,
-    pub privilege_partial_rewards: Uint128,
+    pub sity_full_rewards: Uint128,
+    pub sity_partial_rewards: Uint128,
+    pub sity_fee_registration: Uint128,
+    pub sity_min_opening: Uint128,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
@@ -44,7 +46,7 @@ pub enum ReceiveMsg {
         charity: Option<CharityResponse>,
         instant_buy: Option<Uint128>,
         reserve_price: Option<Uint128>,
-        private_sale_privilege: Option<Uint128>,
+        private_sale: bool,
     },
     /// Register private sale
     RegisterPrivateSale { auction_id: u64 },
@@ -87,7 +89,7 @@ pub struct AuctionResponse {
     pub charity: Option<CharityResponse>,
     pub instant_buy: Option<Uint128>,
     pub reserve_price: Option<Uint128>,
-    pub private_sale_privilege: Option<Uint128>,
+    pub private_sale: bool,
     pub resolved: bool,
 }
 
@@ -95,7 +97,7 @@ pub struct AuctionResponse {
 pub struct BidResponse {
     pub bid_counter: u64,
     pub total_bid: Uint128,
-    pub privilege_used: Option<Uint128>,
+    pub sity_used: Option<Uint128>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
