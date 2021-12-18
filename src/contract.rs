@@ -8,7 +8,6 @@ use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
 use cw_storage_plus::Bound;
 use std::convert::TryInto;
-use std::ops::Mul;
 
 use crate::error::ContractError;
 use crate::msg::{

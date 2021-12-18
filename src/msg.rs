@@ -1,5 +1,4 @@
-use crate::state::CharityInfo;
-use cosmwasm_std::{Decimal, Uint128};
+use cosmwasm_std::Uint128;
 use cw20::Cw20ReceiveMsg;
 use cw721::Cw721ReceiveMsg;
 use schemars::JsonSchema;
