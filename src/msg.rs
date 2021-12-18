@@ -1,4 +1,5 @@
-use cosmwasm_std::Uint128;
+use crate::state::Charity;
+use cosmwasm_std::{Decimal, Uint128};
 use cw20::Cw20ReceiveMsg;
 use cw721::Cw721ReceiveMsg;
 use schemars::JsonSchema;
@@ -43,7 +44,7 @@ pub enum ReceiveMsg {
         start_price: Option<Uint128>,
         start_time: Option<u64>,
         end_time: u64,
-        charity: Option<CharityResponse>,
+        charity: Option<Charity>,
         instant_buy: Option<Uint128>,
         reserve_price: Option<Uint128>,
         private_sale: bool,
@@ -103,15 +104,19 @@ pub struct BidResponse {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct CharityResponse {
     pub address: String,
-    pub fee_percentage: Uint128,
+    pub fee_percentage: Decimal,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct ConfigResponse {
     pub denom: String,
-    pub bid_margin: Uint128,
-    pub lota_fee: Uint128,
+    pub bid_margin: Decimal,
+    pub lota_fee: Decimal,
     pub lota_contract: String,
+    pub sity_full_rewards: Decimal,
+    pub sity_partial_rewards: Decimal,
+    pub sity_fee_registration: Decimal,
+    pub sity_min_opening: Uint128,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]

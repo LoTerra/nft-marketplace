@@ -30,6 +30,11 @@ pub struct CharityInfo {
     pub address: CanonicalAddr,
     pub fee_percentage: Decimal,
 }
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct Charity {
+    pub address: String,
+    pub fee_percentage: Uint128,
+}
 
 /*
    TODO: Should we ask for a collateral for selling ? in order to limit spam

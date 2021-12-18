@@ -16,8 +16,8 @@ use crate::msg::{
     HistoryBidResponse, HistoryResponse, InstantiateMsg, QueryMsg, ReceiveMsg, StateResponse,
 };
 use crate::state::{
-    BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, State, BIDS, CONFIG,
-    HISTORIES, HISTORIES_BIDDER, ITEMS, STATE,
+    BidInfo, Charity, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, State, BIDS,
+    CONFIG, HISTORIES, HISTORIES_BIDDER, ITEMS, STATE,
 };
 use crate::taxation::deduct_tax;
 
@@ -264,7 +264,7 @@ pub fn execute_create_auction(
     start_price: Option<Uint128>,
     start_time: Option<u64>,
     end_time: u64,
-    charity: Option<CharityResponse>,
+    charity: Option<Charity>,
     instant_buy: Option<Uint128>,
     reserve_price: Option<Uint128>,
     private_sale: bool,
@@ -1114,7 +1114,7 @@ fn query_all_auctions(
                     None => None,
                     Some(charity) => Some(CharityResponse {
                         address: deps.api.addr_humanize(&charity.address)?.to_string(),
-                        fee_percentage: charity.fee_percentage * Uint128::from(1u128),
+                        fee_percentage: charity.fee_percentage,
                     }),
                 };
 
@@ -1201,9 +1201,13 @@ fn query_config(deps: Deps, _env: Env) -> StdResult<ConfigResponse> {
     let config = CONFIG.load(deps.storage)?;
     Ok(ConfigResponse {
         denom: config.denom,
-        bid_margin: config.bid_margin * Uint128::from(1u128),
-        lota_fee: config.lota_fee * Uint128::from(1u128),
+        bid_margin: config.bid_margin,
+        lota_fee: config.lota_fee,
         lota_contract: deps.api.addr_humanize(&config.lota_contract)?.to_string(),
+        sity_full_rewards: config.sity_full_rewards,
+        sity_partial_rewards: config.sity_partial_rewards,
+        sity_fee_registration: config.sity_fee_registration,
+        sity_min_opening: config.sity_min_opening,
     })
 }
 
@@ -1229,7 +1233,7 @@ fn query_auction(deps: Deps, _env: Env, auction_id: u64) -> StdResult<AuctionRes
         None => None,
         Some(charity) => Some(CharityResponse {
             address: deps.api.addr_humanize(&charity.address)?.to_string(),
-            fee_percentage: charity.fee_percentage * Uint128::from(1u128),
+            fee_percentage: charity.fee_percentage,
         }),
     };
 
@@ -1329,7 +1333,7 @@ mod tests {
         start_price: Option<Uint128>,
         start_time: Option<u64>,
         end_time: u64,
-        charity: Option<CharityResponse>,
+        charity: Option<Charity>,
         instant_buy: Option<Uint128>,
         reserve_price: Option<Uint128>,
         private_sale: bool,
@@ -1392,7 +1396,7 @@ mod tests {
             None,
             None,
             env.block.time.plus_seconds(1000).seconds(),
-            Some(CharityResponse {
+            Some(Charity {
                 address: "angel".to_string(),
                 fee_percentage: Uint128::from(101u128),
             }),
@@ -1891,7 +1895,7 @@ mod tests {
             None,
             None,
             env.block.time.plus_seconds(1000).seconds(),
-            Some(CharityResponse {
+            Some(Charity {
                 address: "angel".to_string(),
                 fee_percentage: Uint128::from(10u128),
             }),
