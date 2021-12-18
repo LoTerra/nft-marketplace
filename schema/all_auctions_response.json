@@ -138,9 +138,7 @@
           "type": "string"
         },
         "fee_percentage": {
-          "type": "integer",
-          "format": "uint8",
-          "minimum": 0.0
+          "$ref": "#/definitions/Uint128"
         }
       }
     },

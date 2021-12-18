@@ -9,8 +9,8 @@ pub struct InstantiateMsg {
     pub denom: String,
     pub cw20_code_id: u64,
     pub cw20_label: String,
-    pub bid_margin: u8,
-    pub lota_fee: u8,
+    pub bid_margin: Uint128,
+    pub lota_fee: Uint128,
     pub lota_contract: String,
     pub sity_full_rewards: Uint128,
     pub sity_partial_rewards: Uint128,
@@ -103,14 +103,14 @@ pub struct BidResponse {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct CharityResponse {
     pub address: String,
-    pub fee_percentage: u8,
+    pub fee_percentage: Uint128,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct ConfigResponse {
     pub denom: String,
-    pub bid_margin: u8,
-    pub lota_fee: u8,
+    pub bid_margin: Uint128,
+    pub lota_fee: Uint128,
     pub lota_contract: String,
 }
 

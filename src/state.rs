@@ -7,8 +7,8 @@ use cw_storage_plus::{Item, Map};
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct Config {
     pub denom: String,
-    pub bid_margin: u8,
-    pub lota_fee: u8,
+    pub bid_margin: Decimal,
+    pub lota_fee: Decimal,
     pub lota_contract: CanonicalAddr,
     pub sity_full_rewards: Decimal,
     pub sity_partial_rewards: Decimal,
@@ -28,7 +28,7 @@ pub const STATE: Item<State> = Item::new("state");
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct CharityInfo {
     pub address: CanonicalAddr,
-    pub fee_percentage: u8,
+    pub fee_percentage: Decimal,
 }
 
 /*

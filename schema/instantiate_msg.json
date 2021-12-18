@@ -16,9 +16,7 @@
   ],
   "properties": {
     "bid_margin": {
-      "type": "integer",
-      "format": "uint8",
-      "minimum": 0.0
+      "$ref": "#/definitions/Uint128"
     },
     "cw20_code_id": {
       "type": "integer",
@@ -35,9 +33,7 @@
       "type": "string"
     },
     "lota_fee": {
-      "type": "integer",
-      "format": "uint8",
-      "minimum": 0.0
+      "$ref": "#/definitions/Uint128"
     },
     "sity_fee_registration": {
       "$ref": "#/definitions/Uint128"

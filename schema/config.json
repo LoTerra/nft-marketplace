@@ -14,9 +14,7 @@
   ],
   "properties": {
     "bid_margin": {
-      "type": "integer",
-      "format": "uint8",
-      "minimum": 0.0
+      "$ref": "#/definitions/Decimal"
     },
     "denom": {
       "type": "string"
@@ -25,9 +23,7 @@
       "$ref": "#/definitions/CanonicalAddr"
     },
     "lota_fee": {
-      "type": "integer",
-      "format": "uint8",
-      "minimum": 0.0
+      "$ref": "#/definitions/Decimal"
     },
     "sity_fee_registration": {
       "$ref": "#/definitions/Decimal"
