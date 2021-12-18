@@ -7,12 +7,12 @@ use cw_storage_plus::{Item, Map};
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct Config {
     pub denom: String,
-    pub bid_margin: Decimal,
-    pub lota_fee: Decimal,
+    pub bid_margin: u64,
+    pub lota_fee: u64,
     pub lota_contract: CanonicalAddr,
-    pub sity_full_rewards: Decimal,
-    pub sity_partial_rewards: Decimal,
-    pub sity_fee_registration: Decimal,
+    pub sity_full_rewards: u64,
+    pub sity_partial_rewards: u64,
+    pub sity_fee_registration: u64,
     pub sity_min_opening: Uint128,
 }
 pub const CONFIG: Item<Config> = Item::new("config");
@@ -28,12 +28,7 @@ pub const STATE: Item<State> = Item::new("state");
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct CharityInfo {
     pub address: CanonicalAddr,
-    pub fee_percentage: Decimal,
-}
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct Charity {
-    pub address: String,
-    pub fee_percentage: Uint128,
+    pub fee_percentage: u64,
 }
 
 /*

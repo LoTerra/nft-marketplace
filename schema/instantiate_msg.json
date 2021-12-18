@@ -16,7 +16,9 @@
   ],
   "properties": {
     "bid_margin": {
-      "$ref": "#/definitions/Uint128"
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
     },
     "cw20_code_id": {
       "type": "integer",
@@ -33,19 +35,27 @@
       "type": "string"
     },
     "lota_fee": {
-      "$ref": "#/definitions/Uint128"
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
     },
     "sity_fee_registration": {
-      "$ref": "#/definitions/Uint128"
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
     },
     "sity_full_rewards": {
-      "$ref": "#/definitions/Uint128"
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
     },
     "sity_min_opening": {
       "$ref": "#/definitions/Uint128"
     },
     "sity_partial_rewards": {
-      "$ref": "#/definitions/Uint128"
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
     }
   },
   "definitions": {
