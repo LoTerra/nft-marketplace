@@ -200,12 +200,15 @@ pub fn execute_register_private_sale(
     if item.private_sale {
         // Private sale detected
         // Calculate SITY requirement
-        let sity_required = match item.highest_bid {
+        let mut sity_required = match item.highest_bid {
             None => config.sity_min_opening,
             Some(highest_bid) => {
                 highest_bid.multiply_ratio(config.sity_fee_registration, Uint128::from(100u128))
             }
         };
+        if sity_required < config.sity_min_opening {
+            sity_required = config.sity_min_opening
+        }
         // Verify the amount is correct
         if sity_required != sent {
             return Err(ContractError::PrivateSaleRestriction(sity_required));
