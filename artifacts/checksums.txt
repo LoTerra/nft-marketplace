@@ -1,1 +1,1 @@
-93ce58b22d22648f047139a1c63ded261ac7824bf3468e09fbcd7ced36974bdf  marketplace.wasm
+066d2a129bc3d21b5f1deefffeb18b339f72063024b6f97c6817013617cab2f6  marketplace.wasm
