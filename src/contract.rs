@@ -35,15 +35,12 @@ pub fn instantiate(
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
     let config = Config {
         denom: msg.denom,
-        bid_margin: Decimal::from_ratio(msg.bid_margin, Uint128::from(100u128)),
-        lota_fee: Decimal::from_ratio(msg.lota_fee, Uint128::from(100u128)),
+        bid_margin: msg.bid_margin,
+        lota_fee: msg.lota_fee,
         lota_contract: deps.api.addr_canonicalize(&msg.lota_contract)?,
-        sity_full_rewards: Decimal::from_ratio(msg.sity_full_rewards, Uint128::from(100u128)),
-        sity_partial_rewards: Decimal::from_ratio(msg.sity_partial_rewards, Uint128::from(100u128)),
-        sity_fee_registration: Decimal::from_ratio(
-            msg.sity_fee_registration,
-            Uint128::from(100u128),
-        ),
+        sity_full_rewards: msg.sity_full_rewards,
+        sity_partial_rewards: msg.sity_partial_rewards,
+        sity_fee_registration: msg.sity_fee_registration,
         sity_min_opening: msg.sity_min_opening,
     };
 
@@ -321,14 +318,14 @@ pub fn execute_create_auction(
     let valid_charity = match charity {
         None => None,
         Some(info) => {
-            if info.fee_percentage.is_zero() || info.fee_percentage.u128() > 10_000 {
+            if info.fee_percentage == Decimal::zero() || info.fee_percentage > Decimal::percent(10_000) {
                 return Err(ContractError::PercentageFormat {});
             }
             let addr_validate = deps.api.addr_validate(info.address.as_str())?;
             let addr_raw = deps.api.addr_canonicalize(addr_validate.as_str())?;
             Some(CharityInfo {
                 address: addr_raw,
-                fee_percentage: Decimal::from_ratio(info.fee_percentage, Uint128::from(100u128)),
+                fee_percentage: info.fee_percentage,
             })
         }
     };
@@ -1117,7 +1114,7 @@ fn query_all_auctions(
                     None => None,
                     Some(charity) => Some(CharityResponse {
                         address: deps.api.addr_humanize(&charity.address)?.to_string(),
-                        fee_percentage: charity.fee_percentage * Uint128::from(1u128),
+                        fee_percentage: charity.fee_percentage,
                     }),
                 };
 
@@ -1204,12 +1201,12 @@ fn query_config(deps: Deps, _env: Env) -> StdResult<ConfigResponse> {
     let config = CONFIG.load(deps.storage)?;
     Ok(ConfigResponse {
         denom: config.denom,
-        bid_margin: config.bid_margin * Uint128::from(1u128),
-        lota_fee: config.lota_fee * Uint128::from(1u128),
+        bid_margin: config.bid_margin,
+        lota_fee: config.lota_fee,
         lota_contract: deps.api.addr_humanize(&config.lota_contract)?.to_string(),
-        sity_full_rewards: config.sity_full_rewards * Uint128::from(1u128),
-        sity_partial_rewards: config.sity_partial_rewards * Uint128::from(1u128),
-        sity_fee_registration: config.sity_fee_registration * Uint128::from(1u128),
+        sity_full_rewards: config.sity_full_rewards,
+        sity_partial_rewards: config.sity_partial_rewards,
+        sity_fee_registration: config.sity_fee_registration,
         sity_min_opening: config.sity_min_opening,
     })
 }
@@ -1236,7 +1233,7 @@ fn query_auction(deps: Deps, _env: Env, auction_id: u64) -> StdResult<AuctionRes
         None => None,
         Some(charity) => Some(CharityResponse {
             address: deps.api.addr_humanize(&charity.address)?.to_string(),
-            fee_percentage: charity.fee_percentage * Uint128::from(1u128),
+            fee_percentage: charity.fee_percentage,
         }),
     };
 
@@ -1282,7 +1279,7 @@ fn query_bidder(deps: Deps, _env: Env, auction_id: u64, address: String) -> StdR
 
 #[cfg(test)]
 mod tests {
-
+    use std::str::FromStr;
     use super::*;
     use crate::error::ContractError::MinBid;
     use crate::mock_querier::mock_dependencies_custom;
@@ -1300,12 +1297,12 @@ mod tests {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
             cw20_label: "cw20".to_string(),
-            bid_margin: Uint128::from(5u128),
-            lota_fee: Uint128::from(5u128),
+            bid_margin: Decimal::percent(5),
+            lota_fee: Decimal::percent(5),
             lota_contract: "loterra".to_string(),
-            sity_full_rewards: Uint128::from(10u128),
-            sity_partial_rewards: Uint128::from(1u128),
-            sity_fee_registration: Uint128::from(2u128),
+            sity_full_rewards: Decimal::percent(10),
+            sity_partial_rewards: Decimal::percent(1),
+            sity_fee_registration: Decimal::percent(2),
             sity_min_opening: Uint128::from(1_000_000u128),
         };
 
@@ -1319,12 +1316,12 @@ mod tests {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
             cw20_label: "cw20".to_string(),
-            bid_margin: Uint128::from(5u128),
-            lota_fee: Uint128::from(5u128),
+            bid_margin: Decimal::percent(5),
+            lota_fee: Decimal::percent(5),
             lota_contract: "loterra".to_string(),
-            sity_full_rewards: Uint128::from(10u128),
-            sity_partial_rewards: Uint128::from(1u128),
-            sity_fee_registration: Uint128::from(2u128),
+            sity_full_rewards: Decimal::percent(10),
+            sity_partial_rewards: Decimal::percent(1),
+            sity_fee_registration: Decimal::percent(2),
             sity_min_opening: Uint128::from(1_000_000u128),
         };
 
@@ -1401,13 +1398,12 @@ mod tests {
             env.block.time.plus_seconds(1000).seconds(),
             Some(CharityResponse {
                 address: "angel".to_string(),
-                fee_percentage: Uint128::from(10_100u128),
+                fee_percentage: Decimal::from_str("101").unwrap(),
             }),
             None,
             None,
             false,
-        )
-        .unwrap();
+        ).unwrap();
 
         let res = execute(
             deps.as_mut(),
@@ -1900,7 +1896,7 @@ mod tests {
             env.block.time.plus_seconds(1000).seconds(),
             Some(CharityResponse {
                 address: "angel".to_string(),
-                fee_percentage: Uint128::from(1_000u128),
+                fee_percentage: Decimal::from_str("10").unwrap(),
             }),
             None,
             None,
@@ -1941,10 +1937,7 @@ mod tests {
                     .api
                     .addr_canonicalize(&deps.api.addr_validate("angel").unwrap().to_string())
                     .unwrap(),
-                fee_percentage: Decimal::from_ratio(
-                    Uint128::from(1_000u128),
-                    Uint128::from(100u128)
-                )
+                fee_percentage: Decimal::from_str("10").unwrap()
             })
         );
         assert_eq!(
