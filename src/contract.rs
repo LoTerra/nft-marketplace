@@ -1,6 +1,6 @@
 use cosmwasm_std::{
-    entry_point, from_binary, to_binary, BankMsg, Binary, Coin, ContractResult, CosmosMsg, Deps,
-    DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult, SubMsg,
+    entry_point, from_binary, to_binary, BankMsg, Binary, Coin, ContractResult, CosmosMsg, Decimal,
+    Deps, DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult, SubMsg,
     SubMsgExecutionResponse, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
@@ -8,7 +8,7 @@ use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
 use cw_storage_plus::Bound;
 use std::convert::TryInto;
-use std::ops::Add;
+use std::ops::{Add, Mul};
 
 use crate::error::ContractError;
 use crate::msg::{
@@ -35,12 +35,15 @@ pub fn instantiate(
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
     let config = Config {
         denom: msg.denom,
-        bid_margin: msg.bid_margin,
-        lota_fee: msg.lota_fee,
+        bid_margin: Decimal::from_ratio(msg.bid_margin, Uint128::from(100u128)),
+        lota_fee: Decimal::from_ratio(msg.lota_fee, Uint128::from(100u128)),
         lota_contract: deps.api.addr_canonicalize(&msg.lota_contract)?,
-        sity_full_rewards: msg.sity_full_rewards,
-        sity_partial_rewards: msg.sity_partial_rewards,
-        sity_fee_registration: msg.sity_fee_registration,
+        sity_full_rewards: Decimal::from_ratio(msg.sity_full_rewards, Uint128::from(100u128)),
+        sity_partial_rewards: Decimal::from_ratio(msg.sity_partial_rewards, Uint128::from(100u128)),
+        sity_fee_registration: Decimal::from_ratio(
+            msg.sity_fee_registration,
+            Uint128::from(100u128),
+        ),
         sity_min_opening: msg.sity_min_opening,
     };
 
@@ -203,9 +206,9 @@ pub fn execute_register_private_sale(
         // Calculate SITY requirement
         let sity_required = match item.highest_bid {
             None => config.sity_min_opening,
-            Some(highest_bid) => config.sity_min_opening.add(
-                highest_bid.multiply_ratio(config.sity_fee_registration, Uint128::from(100u128)),
-            ),
+            Some(highest_bid) => config
+                .sity_min_opening
+                .add(highest_bid.mul(config.sity_fee_registration)),
         };
 
         // Verify the amount is correct
@@ -318,14 +321,14 @@ pub fn execute_create_auction(
     let valid_charity = match charity {
         None => None,
         Some(info) => {
-            if info.fee_percentage == 0 || info.fee_percentage > 100 {
+            if info.fee_percentage.is_zero() || info.fee_percentage.u128() > 10_000 {
                 return Err(ContractError::PercentageFormat {});
             }
             let addr_validate = deps.api.addr_validate(info.address.as_str())?;
             let addr_raw = deps.api.addr_canonicalize(addr_validate.as_str())?;
             Some(CharityInfo {
                 address: addr_raw,
-                fee_percentage: info.fee_percentage,
+                fee_percentage: Decimal::from_ratio(info.fee_percentage, Uint128::from(100u128)),
             })
         }
     };
@@ -438,9 +441,7 @@ pub fn execute_retract_bids(
     let mut msgs = vec![bank_msg];
 
     if !bid.resolved {
-        let priv_reward_amount = bid
-            .total_bid
-            .multiply_ratio(config.sity_partial_rewards, Uint128::from(100u128));
+        let priv_reward_amount = bid.total_bid.mul(config.sity_partial_rewards);
         let privilege_msg = Cw20ExecuteMsg::Mint {
             recipient: info.sender.to_string(),
             amount: priv_reward_amount,
@@ -507,13 +508,11 @@ pub fn execute_withdraw_nft(
         net_amount_after = highest_bid;
         // Apply fee only if it is not a private sale
         if !item.private_sale {
-            lota_fee_amount =
-                net_amount_after.multiply_ratio(config.lota_fee, Uint128::from(100u128));
+            lota_fee_amount = net_amount_after.mul(config.lota_fee);
         }
         net_amount_after = net_amount_after.checked_sub(lota_fee_amount).unwrap();
         if let Some(charity) = item.charity {
-            charity_amount =
-                net_amount_after.multiply_ratio(charity.fee_percentage, Uint128::from(100u128));
+            charity_amount = net_amount_after.mul(charity.fee_percentage);
             net_amount_after = net_amount_after.checked_sub(charity_amount).unwrap();
             charity_address = Some(charity.address);
         }
@@ -549,8 +548,7 @@ pub fn execute_withdraw_nft(
     // Send to winner and creator if exist
     if recipient_address_raw != item.creator {
         if !highest_bid_amount.is_zero() {
-            let priv_reward_amount =
-                highest_bid_amount.multiply_ratio(config.sity_full_rewards, Uint128::from(100u128));
+            let priv_reward_amount = highest_bid_amount.mul(config.sity_full_rewards);
             /*
                 Prepare msg to mint rewards
             */
@@ -680,9 +678,7 @@ pub fn execute_place_bid(
         // Calculate SITY requirement
         let sity_required = match item.highest_bid {
             None => config.sity_min_opening,
-            Some(highest_bid) => {
-                highest_bid.multiply_ratio(config.sity_fee_registration, Uint128::from(100u128))
-            }
+            Some(highest_bid) => highest_bid.mul(config.sity_fee_registration),
         };
 
         // Check if already registered
@@ -706,7 +702,7 @@ pub fn execute_place_bid(
         }
     };
 
-    let bid_margin = current_bid.multiply_ratio(config.bid_margin, Uint128::from(100u128));
+    let bid_margin = current_bid.mul(config.bid_margin);
     let min_bid = current_bid.checked_add(bid_margin).unwrap();
     let bid_total_sent = match BIDS.may_load(
         deps.storage,
@@ -878,9 +874,7 @@ pub fn execute_instant_buy(
         // Calculate SITY requirement
         let sity_required = match item.highest_bid {
             None => config.sity_min_opening,
-            Some(highest_bid) => {
-                highest_bid.multiply_ratio(config.sity_fee_registration, Uint128::from(100u128))
-            }
+            Some(highest_bid) => highest_bid.mul(config.sity_fee_registration),
         };
         if BIDS.may_load(
             deps.storage,
@@ -1123,7 +1117,7 @@ fn query_all_auctions(
                     None => None,
                     Some(charity) => Some(CharityResponse {
                         address: deps.api.addr_humanize(&charity.address)?.to_string(),
-                        fee_percentage: charity.fee_percentage,
+                        fee_percentage: charity.fee_percentage * Uint128::from(1u128),
                     }),
                 };
 
@@ -1210,12 +1204,12 @@ fn query_config(deps: Deps, _env: Env) -> StdResult<ConfigResponse> {
     let config = CONFIG.load(deps.storage)?;
     Ok(ConfigResponse {
         denom: config.denom,
-        bid_margin: config.bid_margin,
-        lota_fee: config.lota_fee,
+        bid_margin: config.bid_margin * Uint128::from(1u128),
+        lota_fee: config.lota_fee * Uint128::from(1u128),
         lota_contract: deps.api.addr_humanize(&config.lota_contract)?.to_string(),
-        sity_full_rewards: config.sity_full_rewards,
-        sity_partial_rewards: config.sity_partial_rewards,
-        sity_fee_registration: config.sity_fee_registration,
+        sity_full_rewards: config.sity_full_rewards * Uint128::from(1u128),
+        sity_partial_rewards: config.sity_partial_rewards * Uint128::from(1u128),
+        sity_fee_registration: config.sity_fee_registration * Uint128::from(1u128),
         sity_min_opening: config.sity_min_opening,
     })
 }
@@ -1242,7 +1236,7 @@ fn query_auction(deps: Deps, _env: Env, auction_id: u64) -> StdResult<AuctionRes
         None => None,
         Some(charity) => Some(CharityResponse {
             address: deps.api.addr_humanize(&charity.address)?.to_string(),
-            fee_percentage: charity.fee_percentage,
+            fee_percentage: charity.fee_percentage * Uint128::from(1u128),
         }),
     };
 
@@ -1306,12 +1300,12 @@ mod tests {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
             cw20_label: "cw20".to_string(),
-            bid_margin: 5,
-            lota_fee: 5,
+            bid_margin: Uint128::from(5u128),
+            lota_fee: Uint128::from(5u128),
             lota_contract: "loterra".to_string(),
-            sity_full_rewards: 10,
-            sity_partial_rewards: 1,
-            sity_fee_registration: 2,
+            sity_full_rewards: Uint128::from(10u128),
+            sity_partial_rewards: Uint128::from(1u128),
+            sity_fee_registration: Uint128::from(2u128),
             sity_min_opening: Uint128::from(1_000_000u128),
         };
 
@@ -1325,12 +1319,12 @@ mod tests {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
             cw20_label: "cw20".to_string(),
-            bid_margin: 5,
-            lota_fee: 5,
+            bid_margin: Uint128::from(5u128),
+            lota_fee: Uint128::from(5u128),
             lota_contract: "loterra".to_string(),
-            sity_full_rewards: 10,
-            sity_partial_rewards: 1,
-            sity_fee_registration: 2,
+            sity_full_rewards: Uint128::from(10u128),
+            sity_partial_rewards: Uint128::from(1u128),
+            sity_fee_registration: Uint128::from(2u128),
             sity_min_opening: Uint128::from(1_000_000u128),
         };
 
@@ -1407,7 +1401,7 @@ mod tests {
             env.block.time.plus_seconds(1000).seconds(),
             Some(CharityResponse {
                 address: "angel".to_string(),
-                fee_percentage: 101,
+                fee_percentage: Uint128::from(10_100u128),
             }),
             None,
             None,
@@ -1906,7 +1900,7 @@ mod tests {
             env.block.time.plus_seconds(1000).seconds(),
             Some(CharityResponse {
                 address: "angel".to_string(),
-                fee_percentage: 10,
+                fee_percentage: Uint128::from(1_000u128),
             }),
             None,
             None,
@@ -1947,7 +1941,10 @@ mod tests {
                     .api
                     .addr_canonicalize(&deps.api.addr_validate("angel").unwrap().to_string())
                     .unwrap(),
-                fee_percentage: 10
+                fee_percentage: Decimal::from_ratio(
+                    Uint128::from(1_000u128),
+                    Uint128::from(100u128)
+                )
             })
         );
         assert_eq!(
