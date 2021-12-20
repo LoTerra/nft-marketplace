@@ -2515,13 +2515,13 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             err,
-            ContractError::PrivateSaleRestriction(Uint128::from(30_900_000u128))
+            ContractError::PrivateSaleRestriction(Uint128::from(31_900_000u128))
         );
 
         // ERROR Send more
         let msg = ExecuteMsg::Receive(Cw20ReceiveMsg {
             sender: "bob".to_string(),
-            amount: Uint128::from(31_900_000u128),
+            amount: Uint128::from(33_900_000u128),
             msg: to_binary(&ReceiveMsg::RegisterPrivateSale { auction_id: 2 }).unwrap(),
         });
 
@@ -2538,7 +2538,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             err,
-            ContractError::PrivateSaleRestriction(Uint128::from(30_900_000u128))
+            ContractError::PrivateSaleRestriction(Uint128::from(31_900_000u128))
         );
 
         let res = execute(
