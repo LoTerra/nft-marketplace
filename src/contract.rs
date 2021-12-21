@@ -37,6 +37,7 @@ pub fn instantiate(
         denom: msg.denom,
         bid_margin: msg.bid_margin,
         lota_fee: msg.lota_fee,
+        lota_fee_low: msg.lota_fee_low,
         lota_contract: deps.api.addr_canonicalize(&msg.lota_contract)?,
         sity_full_rewards: msg.sity_full_rewards,
         sity_partial_rewards: msg.sity_partial_rewards,
@@ -318,14 +319,14 @@ pub fn execute_create_auction(
     let valid_charity = match charity {
         None => None,
         Some(info) => {
-            if info.fee_percentage.is_zero() || info.fee_percentage > Decimal::percent(10_000) {
+            if info.fee_percentage.is_zero() || info.fee_percentage > Decimal::one() {
                 return Err(ContractError::PercentageFormat {});
             }
             let addr_validate = deps.api.addr_validate(info.address.as_str())?;
             let addr_raw = deps.api.addr_canonicalize(addr_validate.as_str())?;
             Some(CharityInfo {
                 address: addr_raw,
-                fee_percentage: info.fee_percentage.div(Uint128::from(100u128)),
+                fee_percentage: info.fee_percentage,
             })
         }
     };
@@ -503,14 +504,15 @@ pub fn execute_withdraw_nft(
     if let Some(highest_bid) = item.highest_bid {
         highest_bid_amount = highest_bid;
         net_amount_after = highest_bid;
-        // Apply fee only if it is not a private sale
+        // Apply fee if it is not a private sale or lower fee if it is a private sale
         if !item.private_sale {
             lota_fee_amount = net_amount_after.mul(config.lota_fee);
+        } else {
+            lota_fee_amount = net_amount_after.mul(config.lota_fee_low);
         }
+
         net_amount_after = net_amount_after.checked_sub(lota_fee_amount).unwrap();
         if let Some(charity) = item.charity {
-            println!("{}", config.lota_fee);
-            println!("{}", charity.fee_percentage);
             charity_amount = net_amount_after.mul(charity.fee_percentage);
             net_amount_after = net_amount_after.checked_sub(charity_amount).unwrap();
             charity_address = Some(charity.address);
@@ -1301,6 +1303,7 @@ mod tests {
             cw20_label: "cw20".to_string(),
             bid_margin: Decimal::from_str("0.05").unwrap(),
             lota_fee: Decimal::from_str("0.05").unwrap(),
+            lota_fee_low: Decimal::from_str("0.0175").unwrap(),
             lota_contract: "loterra".to_string(),
             sity_full_rewards: Decimal::from_str("0.10").unwrap(),
             sity_partial_rewards: Decimal::from_str("0.01").unwrap(),
@@ -1320,6 +1323,7 @@ mod tests {
             cw20_label: "cw20".to_string(),
             bid_margin: Decimal::from_str("0.05").unwrap(),
             lota_fee: Decimal::from_str("0.05").unwrap(),
+            lota_fee_low: Decimal::from_str("0.0175").unwrap(),
             lota_contract: "loterra".to_string(),
             sity_full_rewards: Decimal::from_str("0.10").unwrap(),
             sity_partial_rewards: Decimal::from_str("0.01").unwrap(),
@@ -1400,7 +1404,7 @@ mod tests {
             env.block.time.plus_seconds(1000).seconds(),
             Some(CharityResponse {
                 address: "angel".to_string(),
-                fee_percentage: Decimal::from_str("101").unwrap(),
+                fee_percentage: Decimal::from_str("1.1").unwrap(),
             }),
             None,
             None,
@@ -1899,7 +1903,7 @@ mod tests {
             env.block.time.plus_seconds(1000).seconds(),
             Some(CharityResponse {
                 address: "angel".to_string(),
-                fee_percentage: Decimal::from_str("10").unwrap(),
+                fee_percentage: Decimal::from_str("0.10").unwrap(),
             }),
             None,
             None,
@@ -2595,7 +2599,14 @@ mod tests {
             to_address: "sender".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(1_689_000_000u128),
+                amount: Uint128::from(1_659_425_000u128),
+            }],
+        });
+        let message_five = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "loterra".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(29_282_178u128),
             }],
         });
 
@@ -2604,6 +2615,7 @@ mod tests {
             SubMsg::new(message_two),
             SubMsg::new(message_three),
             SubMsg::new(message_four),
+            SubMsg::new(message_five),
         ];
         assert_eq!(res.messages, all_msg);
 
@@ -2616,7 +2628,7 @@ mod tests {
             env.block.time.plus_seconds(1000).seconds(),
             Some(CharityResponse {
                 address: "charity".to_string(),
-                fee_percentage: Decimal::from_str("2.5").unwrap(),
+                fee_percentage: Decimal::from_str("0.025").unwrap(),
             }),
             None,
             None,

@@ -9,6 +9,7 @@ pub struct Config {
     pub denom: String,
     pub bid_margin: Decimal,
     pub lota_fee: Decimal,
+    pub lota_fee_low: Decimal,
     pub lota_contract: CanonicalAddr,
     pub sity_full_rewards: Decimal,
     pub sity_partial_rewards: Decimal,
