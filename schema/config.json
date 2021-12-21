@@ -7,6 +7,7 @@
     "denom",
     "lota_contract",
     "lota_fee",
+    "lota_fee_low",
     "sity_fee_registration",
     "sity_full_rewards",
     "sity_min_opening",
@@ -23,6 +24,9 @@
       "$ref": "#/definitions/CanonicalAddr"
     },
     "lota_fee": {
+      "$ref": "#/definitions/Decimal"
+    },
+    "lota_fee_low": {
       "$ref": "#/definitions/Decimal"
     },
     "sity_fee_registration": {
