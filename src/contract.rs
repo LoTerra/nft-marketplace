@@ -8,7 +8,7 @@ use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
 use cw_storage_plus::Bound;
 use std::convert::TryInto;
-use std::ops::{Add, Mul};
+use std::ops::{Add, Div, Mul};
 
 use crate::error::ContractError;
 use crate::msg::{
@@ -318,14 +318,14 @@ pub fn execute_create_auction(
     let valid_charity = match charity {
         None => None,
         Some(info) => {
-            if info.fee_percentage == Decimal::zero() || info.fee_percentage > Decimal::percent(10_000) {
+            if info.fee_percentage.is_zero() || info.fee_percentage > Decimal::percent(10_000) {
                 return Err(ContractError::PercentageFormat {});
             }
             let addr_validate = deps.api.addr_validate(info.address.as_str())?;
             let addr_raw = deps.api.addr_canonicalize(addr_validate.as_str())?;
             Some(CharityInfo {
                 address: addr_raw,
-                fee_percentage: info.fee_percentage,
+                fee_percentage: info.fee_percentage.div(Uint128::from(100u128)),
             })
         }
     };
@@ -509,6 +509,8 @@ pub fn execute_withdraw_nft(
         }
         net_amount_after = net_amount_after.checked_sub(lota_fee_amount).unwrap();
         if let Some(charity) = item.charity {
+            println!("{}", config.lota_fee);
+            println!("{}", charity.fee_percentage);
             charity_amount = net_amount_after.mul(charity.fee_percentage);
             net_amount_after = net_amount_after.checked_sub(charity_amount).unwrap();
             charity_address = Some(charity.address);
@@ -1279,13 +1281,13 @@ fn query_bidder(deps: Deps, _env: Env, auction_id: u64, address: String) -> StdR
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
     use super::*;
     use crate::error::ContractError::MinBid;
     use crate::mock_querier::mock_dependencies_custom;
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MOCK_CONTRACT_ADDR};
     use cosmwasm_std::{coins, from_binary, Api, Attribute, Decimal, ReplyOn, StdError};
     use cw20::Cw20ExecuteMsg;
+    use std::str::FromStr;
 
     #[test]
     fn proper_initialization() {
@@ -1297,12 +1299,12 @@ mod tests {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
             cw20_label: "cw20".to_string(),
-            bid_margin: Decimal::percent(5),
-            lota_fee: Decimal::percent(5),
+            bid_margin: Decimal::from_str("0.05").unwrap(),
+            lota_fee: Decimal::from_str("0.05").unwrap(),
             lota_contract: "loterra".to_string(),
-            sity_full_rewards: Decimal::percent(10),
-            sity_partial_rewards: Decimal::percent(1),
-            sity_fee_registration: Decimal::percent(2),
+            sity_full_rewards: Decimal::from_str("0.10").unwrap(),
+            sity_partial_rewards: Decimal::from_str("0.01").unwrap(),
+            sity_fee_registration: Decimal::from_str("0.02").unwrap(),
             sity_min_opening: Uint128::from(1_000_000u128),
         };
 
@@ -1316,12 +1318,12 @@ mod tests {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
             cw20_label: "cw20".to_string(),
-            bid_margin: Decimal::percent(5),
-            lota_fee: Decimal::percent(5),
+            bid_margin: Decimal::from_str("0.05").unwrap(),
+            lota_fee: Decimal::from_str("0.05").unwrap(),
             lota_contract: "loterra".to_string(),
-            sity_full_rewards: Decimal::percent(10),
-            sity_partial_rewards: Decimal::percent(1),
-            sity_fee_registration: Decimal::percent(2),
+            sity_full_rewards: Decimal::from_str("0.10").unwrap(),
+            sity_partial_rewards: Decimal::from_str("0.01").unwrap(),
+            sity_fee_registration: Decimal::from_str("0.02").unwrap(),
             sity_min_opening: Uint128::from(1_000_000u128),
         };
 
@@ -1403,7 +1405,8 @@ mod tests {
             None,
             None,
             false,
-        ).unwrap();
+        )
+        .unwrap();
 
         let res = execute(
             deps.as_mut(),
@@ -1937,7 +1940,7 @@ mod tests {
                     .api
                     .addr_canonicalize(&deps.api.addr_validate("angel").unwrap().to_string())
                     .unwrap(),
-                fee_percentage: Decimal::from_str("10").unwrap()
+                fee_percentage: Decimal::from_str("0.10").unwrap()
             })
         );
         assert_eq!(
@@ -2605,6 +2608,60 @@ mod tests {
         assert_eq!(res.messages, all_msg);
 
         println!("{:?}", res);
+        // Create auction with end_time
+        let mut env = mock_env();
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            Some(CharityResponse {
+                address: "charity".to_string(),
+                fee_percentage: Decimal::from_str("2.5").unwrap(),
+            }),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        /*
+           Place bid
+        */
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 3 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "alice",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(100u128),
+                }],
+            ),
+            execute_msg,
+        )
+        .unwrap();
+        //expire the auction
+        env.block.time = env.block.time.plus_seconds(2000);
+        /*
+           Withdraw NFT
+        */
+
+        //  Withdraw NFT to winner
+        let msg = ExecuteMsg::WithdrawNft { auction_id: 3 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("alice", &vec![]),
+            msg.clone(),
+        )
+        .unwrap();
     }
     #[test]
     fn creator_withdraw_nft() {
