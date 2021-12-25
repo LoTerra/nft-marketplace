@@ -398,6 +398,9 @@ pub fn execute_retract_bids(
     let state = STATE.load(deps.storage)?;
 
     let item = ITEMS.load(deps.storage, &auction_id.to_be_bytes())?;
+    let reserve_price = item.reserve_price.unwrap_or_default();
+    let highest_bid = item.highest_bid.unwrap_or_default();
+
     let bid = BIDS.load(
         deps.storage,
         (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
@@ -406,8 +409,6 @@ pub fn execute_retract_bids(
     // Check if the highest bidder is the sender
     if let Some(highest_bidder) = item.highest_bidder {
         if highest_bidder == sender_raw {
-            let reserve_price = item.reserve_price.unwrap_or_default();
-            let highest_bid = item.highest_bid.unwrap_or_default();
             // Verify if the highest bid is higher or equal the reserve price
             // Meaning the highest bidder is the future owner and unauthorized to retract
             if highest_bid >= reserve_price {
@@ -444,7 +445,7 @@ pub fn execute_retract_bids(
     });
     let mut msgs = vec![bank_msg];
 
-    if !bid.resolved {
+    if !bid.resolved && reserve_price < highest_bid {
         let priv_reward_amount = bid.total_bid.mul(config.sity_partial_rewards);
         let privilege_msg = Cw20ExecuteMsg::Mint {
             recipient: info.sender.to_string(),
@@ -2164,6 +2165,26 @@ mod tests {
             msg.clone(),
         )
         .unwrap();
+        let mint_msg = Cw20ExecuteMsg::Mint {
+            recipient: "sam".to_string(),
+            amount: Uint128::from(21u128),
+        };
+        let cosmos_mint_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: "cosmos2contract".to_string(),
+            msg: to_binary(&mint_msg).unwrap(),
+            funds: vec![],
+        });
+        let cosmos_bank_msg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "sam".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(2079u128),
+            }],
+        });
+        assert_eq!(
+            res.messages,
+            vec![SubMsg::new(cosmos_bank_msg), SubMsg::new(cosmos_mint_msg)]
+        );
 
         // Bid closed expire
         let mut env = mock_env();
@@ -2235,6 +2256,27 @@ mod tests {
         )
         .unwrap();
 
+        let mint_msg = Cw20ExecuteMsg::Mint {
+            recipient: "bob".to_string(),
+            amount: Uint128::from(20u128),
+        };
+        let cosmos_mint_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: "cosmos2contract".to_string(),
+            msg: to_binary(&mint_msg).unwrap(),
+            funds: vec![],
+        });
+        let cosmos_bank_msg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "bob".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(1980u128),
+            }],
+        });
+        assert_eq!(
+            res.messages,
+            vec![SubMsg::new(cosmos_bank_msg), SubMsg::new(cosmos_mint_msg)]
+        );
+
         let bob_raw = deps.api.addr_canonicalize("bob").unwrap();
         let bid_bob = BIDS
             .load(
@@ -2251,6 +2293,133 @@ mod tests {
             msg.clone(),
         )
         .unwrap_err();
+    }
+
+    #[test]
+    fn retract_bid_reserve_not_met() {
+        let mut deps = mock_dependencies_custom(&coins(2, "token"));
+        init_default(deps.as_mut());
+
+        // Create auction with end_time
+        let mut env = mock_env();
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            Some(CharityResponse {
+                address: "charity".to_string(),
+                fee_percentage: Decimal::from_str("0.10").unwrap(),
+            }),
+            None,
+            Some(Uint128::from(1000u128)),
+            false,
+        )
+        .unwrap();
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        /*
+           Place bid
+        */
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 0 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "alice",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(100u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap();
+
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "bob",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(500u128),
+                }],
+            ),
+            execute_msg,
+        )
+        .unwrap();
+        //expire the auction
+        env.block.time = env.block.time.plus_seconds(2000);
+        /*
+           Max bidder retract bid
+        */
+
+        let execute_msg = ExecuteMsg::RetractBids { auction_id: 0 };
+
+        // Alice retract his bid and no SITY minted since retract are not met
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("alice", &vec![]),
+            execute_msg.clone(),
+        )
+        .unwrap();
+        let cosmos_msg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "alice".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(99u128),
+            }],
+        });
+        assert_eq!(res.messages, vec![SubMsg::new(cosmos_msg)]);
+
+        // Bob the highest bidder also can retract the bid
+        // reserve price was not met
+        // and no SITY minted since retract are not met
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("bob", &vec![]),
+            execute_msg.clone(),
+        )
+        .unwrap();
+        let cosmos_msg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "bob".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(495u128),
+            }],
+        });
+        assert_eq!(res.messages, vec![SubMsg::new(cosmos_msg)]);
+
+        /*
+           Creator withdraw the nft since reserve price not met
+        */
+        let execute_msg = ExecuteMsg::WithdrawNft { auction_id: 0 };
+
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("bob", &vec![]),
+            execute_msg.clone(),
+        )
+        .unwrap();
+
+        let transfer_msg = cw721::Cw721ExecuteMsg::TransferNft {
+            recipient: "sender".to_string(),
+            token_id: "test".to_string(),
+        };
+        let cosmos_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: "market".to_string(),
+            msg: to_binary(&transfer_msg).unwrap(),
+            funds: vec![],
+        });
+        assert_eq!(res.messages, vec![SubMsg::new(cosmos_msg)])
     }
 
     #[test]
