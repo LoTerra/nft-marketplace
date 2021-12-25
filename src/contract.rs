@@ -24,7 +24,8 @@ use crate::taxation::deduct_tax;
 // version info for migration info
 const CONTRACT_NAME: &str = "crates.io:marketplace";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const MIN_TIME_AUCTION: u64 = 600;
+const MIN_TIME_AUCTION: u64 = 600; // 10 min
+const LAST_MINUTE_BID_EXTRA_TIME: u64 = 600; // 10 min
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
@@ -745,7 +746,19 @@ pub fn execute_place_bid(
 
             updated_item.highest_bid = Some(bid_total_sent);
             updated_item.highest_bidder = Some(sender_raw.clone());
+            // New bid incoming
             updated_item.total_bids += 1;
+
+            // Any bids made in the last 10 minutes of an auction will extend each auction by 10 more minutes.
+            if env
+                .block
+                .time
+                .plus_seconds(LAST_MINUTE_BID_EXTRA_TIME)
+                .seconds()
+                > updated_item.end_time
+            {
+                updated_item.end_time = updated_item.end_time.add(LAST_MINUTE_BID_EXTRA_TIME);
+            }
 
             Ok(updated_item)
         },
@@ -2295,6 +2308,87 @@ mod tests {
         .unwrap_err();
     }
 
+    #[test]
+    fn extend_bid_last_minute() {
+        //Any bids made in the last 10 minutes of an auction will extend each auction by 10 more minutes.
+        let mut deps = mock_dependencies_custom(&coins(2, "token"));
+        init_default(deps.as_mut());
+
+        // Create auction with end_time
+        let mut env = mock_env();
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            Some(CharityResponse {
+                address: "charity".to_string(),
+                fee_percentage: Decimal::from_str("0.10").unwrap(),
+            }),
+            None,
+            Some(Uint128::from(1000u128)),
+            false,
+        )
+        .unwrap();
+
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        let prev_item_info = ITEMS
+            .load(deps.as_ref().storage, &0_u64.to_be_bytes())
+            .unwrap();
+
+        /*
+           Place bid
+        */
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 0 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "bob",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(100u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap();
+        let item_info = ITEMS
+            .load(deps.as_ref().storage, &0_u64.to_be_bytes())
+            .unwrap();
+        assert_eq!(prev_item_info.end_time, item_info.end_time);
+
+        //Last minute bid incoming will extend 10 min more the sell ending
+        env.block.time = env.block.time.plus_seconds(401);
+
+        /*
+           Place bid
+        */
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 0 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "alice",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(105u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap();
+
+        let item_info = ITEMS
+            .load(deps.as_ref().storage, &0_u64.to_be_bytes())
+            .unwrap();
+        assert_ne!(prev_item_info.end_time, item_info.end_time);
+    }
     #[test]
     fn retract_bid_reserve_not_met() {
         let mut deps = mock_dependencies_custom(&coins(2, "token"));
