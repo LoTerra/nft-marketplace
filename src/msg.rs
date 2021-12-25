@@ -1,4 +1,4 @@
-use cosmwasm_std::Uint128;
+use cosmwasm_std::{Decimal, Uint128};
 use cw20::Cw20ReceiveMsg;
 use cw721::Cw721ReceiveMsg;
 use schemars::JsonSchema;
@@ -9,12 +9,13 @@ pub struct InstantiateMsg {
     pub denom: String,
     pub cw20_code_id: u64,
     pub cw20_label: String,
-    pub bid_margin: u64,
-    pub lota_fee: u64,
+    pub bid_margin: Decimal,
+    pub lota_fee: Decimal,
+    pub lota_fee_low: Decimal,
     pub lota_contract: String,
-    pub sity_full_rewards: u64,
-    pub sity_partial_rewards: u64,
-    pub sity_fee_registration: u64,
+    pub sity_full_rewards: Decimal,
+    pub sity_partial_rewards: Decimal,
+    pub sity_fee_registration: Decimal,
     pub sity_min_opening: Uint128,
 }
 
@@ -103,18 +104,18 @@ pub struct BidResponse {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct CharityResponse {
     pub address: String,
-    pub fee_percentage: u64,
+    pub fee_percentage: Decimal,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct ConfigResponse {
     pub denom: String,
-    pub bid_margin: u64,
-    pub lota_fee: u64,
+    pub bid_margin: Decimal,
+    pub lota_fee: Decimal,
     pub lota_contract: String,
-    pub sity_full_rewards: u64,
-    pub sity_partial_rewards: u64,
-    pub sity_fee_registration: u64,
+    pub sity_full_rewards: Decimal,
+    pub sity_partial_rewards: Decimal,
+    pub sity_fee_registration: Decimal,
     pub sity_min_opening: Uint128,
 }
 

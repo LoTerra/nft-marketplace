@@ -1,6 +1,6 @@
 use cosmwasm_std::{
-    entry_point, from_binary, to_binary, BankMsg, Binary, Coin, ContractResult, CosmosMsg, Deps,
-    DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult, SubMsg,
+    entry_point, from_binary, to_binary, BankMsg, Binary, Coin, ContractResult, CosmosMsg, Decimal,
+    Deps, DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult, SubMsg,
     SubMsgExecutionResponse, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
@@ -8,7 +8,7 @@ use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
 use cw_storage_plus::Bound;
 use std::convert::TryInto;
-use std::ops::Add;
+use std::ops::{Add, Mul};
 
 use crate::error::ContractError;
 use crate::msg::{
@@ -37,6 +37,7 @@ pub fn instantiate(
         denom: msg.denom,
         bid_margin: msg.bid_margin,
         lota_fee: msg.lota_fee,
+        lota_fee_low: msg.lota_fee_low,
         lota_contract: deps.api.addr_canonicalize(&msg.lota_contract)?,
         sity_full_rewards: msg.sity_full_rewards,
         sity_partial_rewards: msg.sity_partial_rewards,
@@ -203,9 +204,9 @@ pub fn execute_register_private_sale(
         // Calculate SITY requirement
         let sity_required = match item.highest_bid {
             None => config.sity_min_opening,
-            Some(highest_bid) => config.sity_min_opening.add(
-                highest_bid.multiply_ratio(config.sity_fee_registration, Uint128::from(100u128)),
-            ),
+            Some(highest_bid) => config
+                .sity_min_opening
+                .add(highest_bid.mul(config.sity_fee_registration)),
         };
 
         // Verify the amount is correct
@@ -318,7 +319,7 @@ pub fn execute_create_auction(
     let valid_charity = match charity {
         None => None,
         Some(info) => {
-            if info.fee_percentage == 0 || info.fee_percentage > 100 {
+            if info.fee_percentage.is_zero() || info.fee_percentage > Decimal::one() {
                 return Err(ContractError::PercentageFormat {});
             }
             let addr_validate = deps.api.addr_validate(info.address.as_str())?;
@@ -438,9 +439,7 @@ pub fn execute_retract_bids(
     let mut msgs = vec![bank_msg];
 
     if !bid.resolved {
-        let priv_reward_amount = bid
-            .total_bid
-            .multiply_ratio(config.sity_partial_rewards, Uint128::from(100u128));
+        let priv_reward_amount = bid.total_bid.mul(config.sity_partial_rewards);
         let privilege_msg = Cw20ExecuteMsg::Mint {
             recipient: info.sender.to_string(),
             amount: priv_reward_amount,
@@ -505,15 +504,16 @@ pub fn execute_withdraw_nft(
     if let Some(highest_bid) = item.highest_bid {
         highest_bid_amount = highest_bid;
         net_amount_after = highest_bid;
-        // Apply fee only if it is not a private sale
+        // Apply fee if it is not a private sale or lower fee if it is a private sale
         if !item.private_sale {
-            lota_fee_amount =
-                net_amount_after.multiply_ratio(config.lota_fee, Uint128::from(100u128));
+            lota_fee_amount = net_amount_after.mul(config.lota_fee);
+        } else {
+            lota_fee_amount = net_amount_after.mul(config.lota_fee_low);
         }
+
         net_amount_after = net_amount_after.checked_sub(lota_fee_amount).unwrap();
         if let Some(charity) = item.charity {
-            charity_amount =
-                net_amount_after.multiply_ratio(charity.fee_percentage, Uint128::from(100u128));
+            charity_amount = net_amount_after.mul(charity.fee_percentage);
             net_amount_after = net_amount_after.checked_sub(charity_amount).unwrap();
             charity_address = Some(charity.address);
         }
@@ -549,8 +549,7 @@ pub fn execute_withdraw_nft(
     // Send to winner and creator if exist
     if recipient_address_raw != item.creator {
         if !highest_bid_amount.is_zero() {
-            let priv_reward_amount =
-                highest_bid_amount.multiply_ratio(config.sity_full_rewards, Uint128::from(100u128));
+            let priv_reward_amount = highest_bid_amount.mul(config.sity_full_rewards);
             /*
                 Prepare msg to mint rewards
             */
@@ -680,9 +679,7 @@ pub fn execute_place_bid(
         // Calculate SITY requirement
         let sity_required = match item.highest_bid {
             None => config.sity_min_opening,
-            Some(highest_bid) => {
-                highest_bid.multiply_ratio(config.sity_fee_registration, Uint128::from(100u128))
-            }
+            Some(highest_bid) => highest_bid.mul(config.sity_fee_registration),
         };
 
         // Check if already registered
@@ -706,7 +703,7 @@ pub fn execute_place_bid(
         }
     };
 
-    let bid_margin = current_bid.multiply_ratio(config.bid_margin, Uint128::from(100u128));
+    let bid_margin = current_bid.mul(config.bid_margin);
     let min_bid = current_bid.checked_add(bid_margin).unwrap();
     let bid_total_sent = match BIDS.may_load(
         deps.storage,
@@ -878,9 +875,7 @@ pub fn execute_instant_buy(
         // Calculate SITY requirement
         let sity_required = match item.highest_bid {
             None => config.sity_min_opening,
-            Some(highest_bid) => {
-                highest_bid.multiply_ratio(config.sity_fee_registration, Uint128::from(100u128))
-            }
+            Some(highest_bid) => highest_bid.mul(config.sity_fee_registration),
         };
         if BIDS.may_load(
             deps.storage,
@@ -1288,13 +1283,13 @@ fn query_bidder(deps: Deps, _env: Env, auction_id: u64, address: String) -> StdR
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use crate::error::ContractError::MinBid;
     use crate::mock_querier::mock_dependencies_custom;
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MOCK_CONTRACT_ADDR};
     use cosmwasm_std::{coins, from_binary, Api, Attribute, Decimal, ReplyOn, StdError};
     use cw20::Cw20ExecuteMsg;
+    use std::str::FromStr;
 
     #[test]
     fn proper_initialization() {
@@ -1306,12 +1301,13 @@ mod tests {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
             cw20_label: "cw20".to_string(),
-            bid_margin: 5,
-            lota_fee: 5,
+            bid_margin: Decimal::from_str("0.05").unwrap(),
+            lota_fee: Decimal::from_str("0.05").unwrap(),
+            lota_fee_low: Decimal::from_str("0.0175").unwrap(),
             lota_contract: "loterra".to_string(),
-            sity_full_rewards: 10,
-            sity_partial_rewards: 1,
-            sity_fee_registration: 2,
+            sity_full_rewards: Decimal::from_str("0.10").unwrap(),
+            sity_partial_rewards: Decimal::from_str("0.01").unwrap(),
+            sity_fee_registration: Decimal::from_str("0.02").unwrap(),
             sity_min_opening: Uint128::from(1_000_000u128),
         };
 
@@ -1325,12 +1321,13 @@ mod tests {
             denom: "uusd".to_string(),
             cw20_code_id: 9,
             cw20_label: "cw20".to_string(),
-            bid_margin: 5,
-            lota_fee: 5,
+            bid_margin: Decimal::from_str("0.05").unwrap(),
+            lota_fee: Decimal::from_str("0.05").unwrap(),
+            lota_fee_low: Decimal::from_str("0.0175").unwrap(),
             lota_contract: "loterra".to_string(),
-            sity_full_rewards: 10,
-            sity_partial_rewards: 1,
-            sity_fee_registration: 2,
+            sity_full_rewards: Decimal::from_str("0.10").unwrap(),
+            sity_partial_rewards: Decimal::from_str("0.01").unwrap(),
+            sity_fee_registration: Decimal::from_str("0.02").unwrap(),
             sity_min_opening: Uint128::from(1_000_000u128),
         };
 
@@ -1407,7 +1404,7 @@ mod tests {
             env.block.time.plus_seconds(1000).seconds(),
             Some(CharityResponse {
                 address: "angel".to_string(),
-                fee_percentage: 101,
+                fee_percentage: Decimal::from_str("1.1").unwrap(),
             }),
             None,
             None,
@@ -1906,7 +1903,7 @@ mod tests {
             env.block.time.plus_seconds(1000).seconds(),
             Some(CharityResponse {
                 address: "angel".to_string(),
-                fee_percentage: 10,
+                fee_percentage: Decimal::from_str("0.10").unwrap(),
             }),
             None,
             None,
@@ -1947,7 +1944,7 @@ mod tests {
                     .api
                     .addr_canonicalize(&deps.api.addr_validate("angel").unwrap().to_string())
                     .unwrap(),
-                fee_percentage: 10
+                fee_percentage: Decimal::from_str("0.10").unwrap()
             })
         );
         assert_eq!(
@@ -2602,7 +2599,14 @@ mod tests {
             to_address: "sender".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(1_689_000_000u128),
+                amount: Uint128::from(1_659_425_000u128),
+            }],
+        });
+        let message_five = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "loterra".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(29_282_178u128),
             }],
         });
 
@@ -2611,10 +2615,65 @@ mod tests {
             SubMsg::new(message_two),
             SubMsg::new(message_three),
             SubMsg::new(message_four),
+            SubMsg::new(message_five),
         ];
         assert_eq!(res.messages, all_msg);
 
         println!("{:?}", res);
+        // Create auction with end_time
+        let mut env = mock_env();
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            Some(CharityResponse {
+                address: "charity".to_string(),
+                fee_percentage: Decimal::from_str("0.025").unwrap(),
+            }),
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        /*
+           Place bid
+        */
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 3 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "alice",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(100u128),
+                }],
+            ),
+            execute_msg,
+        )
+        .unwrap();
+        //expire the auction
+        env.block.time = env.block.time.plus_seconds(2000);
+        /*
+           Withdraw NFT
+        */
+
+        //  Withdraw NFT to winner
+        let msg = ExecuteMsg::WithdrawNft { auction_id: 3 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("alice", &vec![]),
+            msg.clone(),
+        )
+        .unwrap();
     }
     #[test]
     fn creator_withdraw_nft() {
