@@ -406,7 +406,13 @@ pub fn execute_retract_bids(
     // Check if the highest bidder is the sender
     if let Some(highest_bidder) = item.highest_bidder {
         if highest_bidder == sender_raw {
-            return Err(ContractError::Unauthorized {});
+            let reserve_price = item.reserve_price.unwrap_or_default();
+            let highest_bid = item.highest_bid.unwrap_or_default();
+            // Verify if the highest bid is higher or equal the reserve price
+            // Meaning the highest bidder is the future owner and unauthorized to retract
+            if highest_bid >= reserve_price {
+                return Err(ContractError::Unauthorized {});
+            }
         }
     }
 
@@ -606,23 +612,22 @@ pub fn execute_withdraw_nft(
                 )?],
             }));
         }
-    }
-
-    /*
-       Prepare msg to send charity if some charity
-    */
-    if let Some(address) = charity_address {
-        if !charity_amount.is_zero() {
-            msgs.push(CosmosMsg::Bank(BankMsg::Send {
-                to_address: deps.api.addr_humanize(&address)?.to_string(),
-                amount: vec![deduct_tax(
-                    &deps.querier,
-                    Coin {
-                        denom: config.denom,
-                        amount: charity_amount,
-                    },
-                )?],
-            }));
+        /*
+            Prepare msg to send charity if some charity
+        */
+        if let Some(address) = charity_address {
+            if !charity_amount.is_zero() {
+                msgs.push(CosmosMsg::Bank(BankMsg::Send {
+                    to_address: deps.api.addr_humanize(&address)?.to_string(),
+                    amount: vec![deduct_tax(
+                        &deps.querier,
+                        Coin {
+                            denom: config.denom,
+                            amount: charity_amount,
+                        },
+                    )?],
+                }));
+            }
         }
     }
 
