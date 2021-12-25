@@ -13,7 +13,8 @@ use std::ops::{Add, Mul};
 use crate::error::ContractError;
 use crate::msg::{
     AllAuctionsResponse, AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg,
-    HistoryBidResponse, HistoryResponse, InstantiateMsg, QueryMsg, ReceiveMsg, StateResponse,
+    HistoryBidResponse, HistoryResponse, InstantiateMsg, MigrateMsg, QueryMsg, ReceiveMsg,
+    StateResponse,
 };
 use crate::state::{
     BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, State, BIDS, CONFIG,
@@ -1298,6 +1299,11 @@ fn query_bidder(deps: Deps, _env: Env, auction_id: u64, address: String) -> StdR
     };
 
     Ok(bid)
+}
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Response> {
+    Ok(Response::default())
 }
 
 #[cfg(test)]

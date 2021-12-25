@@ -5,7 +5,7 @@ use cosmwasm_schema::{export_schema, remove_schemas, schema_for};
 
 use marketplace::msg::{
     AllAuctionsResponse, AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg,
-    HistoryBidResponse, HistoryResponse, InstantiateMsg, QueryMsg, StateResponse,
+    HistoryBidResponse, HistoryResponse, InstantiateMsg, MigrateMsg, QueryMsg, StateResponse,
 };
 use marketplace::state::{Config, State};
 
@@ -28,4 +28,5 @@ fn main() {
     export_schema(&schema_for!(StateResponse), &out_dir);
     export_schema(&schema_for!(HistoryBidResponse), &out_dir);
     export_schema(&schema_for!(HistoryResponse), &out_dir);
+    export_schema(&schema_for!(MigrateMsg), &out_dir);
 }

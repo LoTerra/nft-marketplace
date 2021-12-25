@@ -142,3 +142,5 @@ pub struct HistoryResponse {
 pub struct AllAuctionsResponse {
     pub auctions: Vec<(u64, AuctionResponse)>,
 }
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct MigrateMsg {}
