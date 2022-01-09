@@ -863,7 +863,7 @@ pub fn execute_place_bid(
     }
 
     let res = Response::new()
-        .add_attribute("new_bid", sent.to_string())
+        .add_attribute("new_bid", history_sent.to_string())
         .add_attribute("sender", info.sender.to_string())
         .add_attribute("auction_id", auction_id.to_string());
     Ok(res)
