@@ -44,8 +44,12 @@ pub enum ContractError {
 
     #[error("Start price cannot be higher than {0}")]
     StartPriceHigherThan(String),
+
     #[error("Instant buy price cannot be lower than {0}")]
     InstantBuyPriceLowerThan(String),
+
+    #[error("You just reached the limit of 6 months auction max time end")]
+    AuctionLimitReached {},
     // Add any other custom errors you like here.
     // Look at https://docs.rs/thiserror/1.0.21/thiserror/ for details.
 }

@@ -26,7 +26,9 @@ use crate::taxation::deduct_tax;
 const CONTRACT_NAME: &str = "crates.io:marketplace";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MIN_TIME_AUCTION: u64 = 600; // 10 min
+const MAX_TIME_AUCTION: u64 = 15778800; // 6 months max
 const LAST_MINUTE_BID_EXTRA_TIME: u64 = 600; // 10 min
+
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
@@ -277,8 +279,13 @@ pub fn execute_create_auction(
     let sender_raw = deps.api.addr_canonicalize(sender.as_ref())?;
     let contract_raw = deps.api.addr_canonicalize(info.sender.as_ref())?;
 
+    // Handle user are not creating auction inferior limit min time auction
     if env.block.time.plus_seconds(MIN_TIME_AUCTION).seconds() > end_time {
         return Err(ContractError::EndTimeExpired {});
+    }
+    // Handle user are not creating auction superior limit max time auction
+    if env.block.time.plus_seconds(MAX_TIME_AUCTION).seconds() < end_time {
+        return Err(ContractError::AuctionLimitReached {});
     }
 
     let start = match start_time {
@@ -1303,6 +1310,9 @@ fn query_bidder(deps: Deps, _env: Env, auction_id: u64, address: String) -> StdR
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Response> {
+    // let mut store = CONFIG.load(deps.storage)?;
+    // store.lota_contract = deps.api.addr_canonicalize(Addr::unchecked("terra1342fp86c3z3q0lksq92lncjxpkfl9hujwh6xfn").as_ref())?;
+    // CONFIG.save(deps.storage, &store)?;
     Ok(Response::default())
 }
 
@@ -1393,6 +1403,17 @@ mod tests {
 
         // ERROR create auction with end_time inferior current time
         let execute_msg = create_msg_nft(None, None, 0, None, None, None, false).unwrap();
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap_err();
+
+        // ERROR create auction with end_time superior 6 month current time
+        let execute_msg =
+            create_msg_nft(None, None, 1000000000000000, None, None, None, false).unwrap();
         let res = execute(
             deps.as_mut(),
             mock_env(),
