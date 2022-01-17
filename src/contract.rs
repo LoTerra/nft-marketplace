@@ -707,19 +707,23 @@ pub fn execute_place_bid(
         };
     }
 
-    let current_bid = match item.start_price {
-        None => item.highest_bid.unwrap_or_default(),
+    let min_bid = match item.start_price {
+        None => {
+            let current_bid = item.highest_bid.unwrap_or_default();
+            let bid_margin = current_bid.mul(config.bid_margin);
+            current_bid.checked_add(bid_margin).unwrap()
+        }
         Some(start_price) => {
             if start_price > item.highest_bid.unwrap_or_default() {
                 start_price
             } else {
-                item.highest_bid.unwrap_or_default()
+                let current_bid = item.highest_bid.unwrap_or_default();
+                let bid_margin = current_bid.mul(config.bid_margin);
+                current_bid.checked_add(bid_margin).unwrap()
             }
         }
     };
 
-    let bid_margin = current_bid.mul(config.bid_margin);
-    let min_bid = current_bid.checked_add(bid_margin).unwrap();
     let bid_total_sent = match BIDS.may_load(
         deps.storage,
         (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
@@ -1313,6 +1317,15 @@ pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Respons
     // let mut store = CONFIG.load(deps.storage)?;
     // store.lota_contract = deps.api.addr_canonicalize(Addr::unchecked("terra1342fp86c3z3q0lksq92lncjxpkfl9hujwh6xfn").as_ref())?;
     // CONFIG.save(deps.storage, &store)?;
+    // ITEMS.update(
+    //     deps.storage,
+    //     &57_u64.to_be_bytes(),
+    //     |item| -> StdResult<_> {
+    //         let mut updated_item = item.unwrap();
+    //         updated_item.end_time = env.block.time.plus_seconds(MAX_TIME_AUCTION).seconds();
+    //         Ok(updated_item)
+    //     },
+    // )?;
     Ok(Response::default())
 }
 
