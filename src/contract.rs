@@ -1,7 +1,7 @@
 use cosmwasm_std::{
     entry_point, from_binary, to_binary, BankMsg, Binary, Coin, ContractResult, CosmosMsg, Decimal,
     Deps, DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult, SubMsg,
-    SubMsgExecutionResponse, Uint128, WasmMsg,
+    SubMsgExecutionResponse, Uint128, WasmMsg, WasmQuery,
 };
 use cw2::set_contract_version;
 use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
@@ -29,7 +29,8 @@ const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MIN_TIME_AUCTION: u64 = 600; // 10 min
 const MAX_TIME_AUCTION: u64 = 15778800; // 6 months max
 const LAST_MINUTE_BID_EXTRA_TIME: u64 = 600; // 10 min
-const ROYALTY_MAX_FEE: &str = "10";
+const ROYALTY_MAX_FEE: &str = "0.10"; // 10% or 10/100
+const DEFAULT_ROYALTY_FEE: &str = "0.01"; // 1% or 1/100
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -492,6 +493,29 @@ pub fn execute_withdraw_nft(
     let state = STATE.load(deps.storage)?;
     let item = ITEMS.load(deps.storage, &auction_id.to_be_bytes())?;
 
+    let contract_address = deps.api.addr_humanize(&item.nft_contract)?;
+    let minter_msg = cw20_base::msg::QueryMsg::Minter {};
+    let wasm = WasmQuery::Smart {
+        contract_addr: contract_address.to_string(),
+        msg: to_binary(&minter_msg)?,
+    };
+    let res: cw20_base::state::MinterData = deps.querier.query(&wasm.into())?;
+
+    let minter = deps.api.addr_canonicalize(&res.minter.to_string())?;
+    let royalty = ROYALTY
+        .load(deps.storage, &minter.as_slice())
+        .unwrap_or(RoyaltyInfo {
+            creator: minter.clone(),
+            fee: Decimal::from_str(DEFAULT_ROYALTY_FEE).unwrap(),
+            recipient: None,
+        });
+    // Set the recipient
+    let raw_royalty_recipient = if let Some(recipient) = royalty.recipient {
+        recipient
+    } else {
+        minter
+    };
+
     if item.resolved {
         return Err(ContractError::Unauthorized {});
     }
@@ -504,6 +528,7 @@ pub fn execute_withdraw_nft(
     let mut net_amount_after = Uint128::zero();
     let mut charity_amount = Uint128::zero();
     let mut lota_fee_amount = Uint128::zero();
+    let mut royalty_fee_amount = Uint128::zero();
     let mut charity_address = None;
     let recipient_address_raw = match item.highest_bidder {
         None => item.creator.clone(),
@@ -525,14 +550,19 @@ pub fn execute_withdraw_nft(
     if let Some(highest_bid) = item.highest_bid {
         highest_bid_amount = highest_bid;
         net_amount_after = highest_bid;
+
+        // Apply Royalty fee
+        royalty_fee_amount = net_amount_after.mul(royalty.fee);
+        net_amount_after = net_amount_after.checked_sub(royalty_fee_amount).unwrap();
+
         // Apply fee if it is not a private sale or lower fee if it is a private sale
         if !item.private_sale {
             lota_fee_amount = net_amount_after.mul(config.lota_fee);
         } else {
             lota_fee_amount = net_amount_after.mul(config.lota_fee_low);
         }
-
         net_amount_after = net_amount_after.checked_sub(lota_fee_amount).unwrap();
+
         if let Some(charity) = item.charity {
             charity_amount = net_amount_after.mul(charity.fee_percentage);
             net_amount_after = net_amount_after.checked_sub(charity_amount).unwrap();
@@ -585,7 +615,7 @@ pub fn execute_withdraw_nft(
                 funds: vec![],
             }));
 
-            // Send to creator
+            // Send to highest bidder
             msgs.push(CosmosMsg::Wasm(WasmMsg::Execute {
                 contract_addr: deps.api.addr_humanize(&state.cw20_address)?.to_string(),
                 msg: to_binary(&Cw20ExecuteMsg::Mint {
@@ -607,6 +637,22 @@ pub fn execute_withdraw_nft(
                     Coin {
                         denom: config.denom.clone(),
                         amount: net_amount_after,
+                    },
+                )?],
+            }));
+        }
+
+        /*
+           Prepare msg send Royalty to minter
+        */
+        if !royalty_fee_amount.is_zero() {
+            msgs.push(CosmosMsg::Bank(BankMsg::Send {
+                to_address: deps.api.addr_humanize(&raw_royalty_recipient)?.to_string(),
+                amount: vec![deduct_tax(
+                    &deps.querier,
+                    Coin {
+                        denom: config.denom.clone(),
+                        amount: royalty_fee_amount,
                     },
                 )?],
             }));
@@ -2654,7 +2700,7 @@ mod tests {
                 "alice",
                 &vec![Coin {
                     denom: "uusd".to_string(),
-                    amount: Uint128::from(100u128),
+                    amount: Uint128::from(100_000_000u128),
                 }],
             ),
             execute_msg,
@@ -2687,7 +2733,7 @@ mod tests {
         };
         let prepare_msg = cw20::Cw20ExecuteMsg::Mint {
             recipient: "sender".to_string(),
-            amount: Uint128::from(10u128),
+            amount: Uint128::from(10_000_000u128),
         };
         let message_two = WasmMsg::Execute {
             contract_addr: "cosmos2contract".to_string(),
@@ -2696,7 +2742,7 @@ mod tests {
         };
         let prepare_msg = cw20::Cw20ExecuteMsg::Mint {
             recipient: "alice".to_string(),
-            amount: Uint128::from(10u128),
+            amount: Uint128::from(10_000_000u128),
         };
         let message_three = WasmMsg::Execute {
             contract_addr: "cosmos2contract".to_string(),
@@ -2707,22 +2753,31 @@ mod tests {
             to_address: "sender".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(94u128),
+                amount: Uint128::from(93_118_811u128),
             }],
         });
         let message_five = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "terrans".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(990_099u128),
+            }],
+        });
+        let message_six = CosmosMsg::Bank(BankMsg::Send {
             to_address: "loterra".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(4u128),
+                amount: Uint128::from(4_900_990u128),
             }],
         });
+
         let all_msg = vec![
             SubMsg::new(message_one),
             SubMsg::new(message_two),
             SubMsg::new(message_three),
             SubMsg::new(message_four),
             SubMsg::new(message_five),
+            SubMsg::new(message_six),
         ];
         assert_eq!(res.messages, all_msg);
 
@@ -2909,6 +2964,7 @@ mod tests {
             ContractError::PrivateSaleRestriction(Uint128::from(31_900_000u128))
         );
 
+        // 1_545_000_000 + 145_000_000 = 299_500_000
         let res = execute(
             deps.as_mut(),
             env.clone(),
@@ -2970,14 +3026,21 @@ mod tests {
             to_address: "sender".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(1_659_425_000u128),
+                amount: Uint128::from(1_642_820_750u128),
             }],
         });
         let message_five = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "terrans".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(16_732_673u128),
+            }],
+        });
+        let message_six = CosmosMsg::Bank(BankMsg::Send {
             to_address: "loterra".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(29_282_178u128),
+                amount: Uint128::from(28_989_356u128),
             }],
         });
 
@@ -2987,6 +3050,7 @@ mod tests {
             SubMsg::new(message_three),
             SubMsg::new(message_four),
             SubMsg::new(message_five),
+            SubMsg::new(message_six),
         ];
         assert_eq!(res.messages, all_msg);
 
@@ -3051,7 +3115,7 @@ mod tests {
         /*
            Withdraw nft creator no bidders
         */
-        let mut deps = mock_dependencies(&coins(2, "token"));
+        let mut deps = mock_dependencies_custom(&coins(2, "token"));
         init_default(deps.as_mut());
 
         let mut env = mock_env();
@@ -3106,7 +3170,53 @@ mod tests {
         assert_eq!(res.messages, all_msg);
         println!("{:?}", res);
     }
+    #[test]
+    fn update_royalty() {
+        /*
+           Withdraw nft creator no bidders
+        */
+        let mut deps = mock_dependencies_custom(&coins(2, "token"));
+        init_default(deps.as_mut());
 
+        let mut env = mock_env();
+        let execute_msg = ExecuteMsg::UpdateRoyalty {
+            fee: Decimal::from_str("0.12").unwrap(),
+            recipient: None,
+        };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("creator_1", &vec![]),
+            execute_msg,
+        )
+        .unwrap_err();
+
+        let execute_msg = ExecuteMsg::UpdateRoyalty {
+            fee: Decimal::from_str("0.1").unwrap(),
+            recipient: None,
+        };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("creator_1", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+
+        let execute_msg = ExecuteMsg::UpdateRoyalty {
+            fee: Decimal::from_str("0.05").unwrap(),
+            recipient: None,
+        };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("creator_1", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+
+        println!("{:?}", res);
+    }
     #[test]
     fn instant_buy() {
         /*

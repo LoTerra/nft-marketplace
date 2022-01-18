@@ -51,6 +51,17 @@ impl Querier for WasmMockQuerier {
 impl WasmMockQuerier {
     pub fn handle_query(&self, request: &QueryRequest<TerraQueryWrapper>) -> QuerierResult {
         match &request {
+            QueryRequest::Wasm(WasmQuery::Smart { contract_addr, msg }) => {
+                if contract_addr == &"market".to_string() {
+                    println!("{:?}", request);
+                    let msg_minter = cw20_base::state::MinterData {
+                        minter: Addr::unchecked("terrans"),
+                        cap: None,
+                    };
+                    return SystemResult::Ok(ContractResult::from(to_binary(&msg_minter)));
+                }
+                panic!("DO NOT ENTER HERE")
+            }
             QueryRequest::Custom(TerraQueryWrapper { route, query_data }) => match query_data {
                 TerraQuery::TaxRate {} => {
                     let res = TaxRateResponse {
