@@ -506,7 +506,7 @@ pub fn execute_withdraw_nft(
             cap: None,
         });
 
-    let minter = if res.minter == "talis"{
+    let minter = if res.minter == "talis" {
         let minter_msg = QueryTalisMsg::MintingInfo {};
         let wasm = WasmQuery::Smart {
             contract_addr: contract_address.to_string(),
