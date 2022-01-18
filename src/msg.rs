@@ -30,6 +30,11 @@ pub enum ExecuteMsg {
     WithdrawNft { auction_id: u64 },
     /// Instant buy if allowed on the sale
     InstantBuy { auction_id: u64 },
+    /// Creator update ROYALTY
+    UpdateRoyalty {
+        fee: Decimal,
+        recipient: Option<String>,
+    },
     /// This accepts a properly-encoded ReceiveMsg from a cw721 contract
     ReceiveNft(Cw721ReceiveMsg),
     /// This accepts a properly-encoded ReceiveMsg from a cw20 contract

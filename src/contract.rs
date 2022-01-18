@@ -9,6 +9,7 @@ use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
 use cw_storage_plus::Bound;
 use std::convert::TryInto;
 use std::ops::{Add, Mul};
+use std::str::FromStr;
 
 use crate::error::ContractError;
 use crate::msg::{
@@ -17,8 +18,8 @@ use crate::msg::{
     StateResponse,
 };
 use crate::state::{
-    BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, State, BIDS, CONFIG,
-    HISTORIES, HISTORIES_BIDDER, ITEMS, STATE,
+    BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, RoyaltyInfo, State, BIDS,
+    CONFIG, HISTORIES, HISTORIES_BIDDER, ITEMS, ROYALTY, STATE,
 };
 use crate::taxation::deduct_tax;
 
@@ -28,6 +29,7 @@ const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MIN_TIME_AUCTION: u64 = 600; // 10 min
 const MAX_TIME_AUCTION: u64 = 15778800; // 6 months max
 const LAST_MINUTE_BID_EXTRA_TIME: u64 = 600; // 10 min
+const ROYALTY_MAX_FEE: &str = "10";
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -98,6 +100,9 @@ pub fn execute(
         ExecuteMsg::WithdrawNft { auction_id } => execute_withdraw_nft(deps, env, info, auction_id),
         ExecuteMsg::PlaceBid { auction_id } => execute_place_bid(deps, env, info, auction_id),
         ExecuteMsg::RetractBids { auction_id } => execute_retract_bids(deps, env, info, auction_id),
+        ExecuteMsg::UpdateRoyalty { fee, recipient } => {
+            execute_update_royalty(deps, env, info, fee, recipient)
+        }
         ExecuteMsg::ReceiveNft(msg) => execute_receive_cw721(deps, env, info, msg),
         ExecuteMsg::Receive(msg) => execute_receive_cw20(deps, env, info, msg),
     }
@@ -1061,6 +1066,64 @@ pub fn execute_instant_buy(
         .add_attribute("instant_buy", "NFT")
         .add_attribute("nft_id", item.nft_id)
         .add_attribute("auction_id", auction_id.to_string());
+    Ok(res)
+}
+
+pub fn execute_update_royalty(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+    fee: Decimal,
+    recipient: Option<String>,
+) -> Result<Response, ContractError> {
+    let raw_sender = deps.api.addr_canonicalize(info.sender.as_str())?;
+    // Handle not abusive Royalty
+    if fee > Decimal::from_str(ROYALTY_MAX_FEE).unwrap() {
+        return Err(ContractError::MaxRoyaltyReached {});
+    }
+    // Handle recipient
+    let set_recipient = if let Some(address) = recipient.clone() {
+        deps.api
+            .addr_canonicalize(deps.api.addr_validate(&address)?.as_str())?
+    } else {
+        raw_sender.clone()
+    };
+
+    match ROYALTY.may_load(deps.storage, &raw_sender.as_ref())? {
+        None => {
+            ROYALTY.save(
+                deps.storage,
+                &raw_sender.as_ref(),
+                &RoyaltyInfo {
+                    creator: raw_sender.clone(),
+                    fee,
+                    recipient: Some(set_recipient.clone()),
+                },
+            )?;
+        }
+        Some(_) => {
+            ROYALTY.update(
+                deps.storage,
+                &raw_sender.as_ref(),
+                |royalty| -> StdResult<_> {
+                    let mut updated_royalty = royalty.unwrap();
+
+                    if let Some(_) = recipient {
+                        updated_royalty.recipient = Some(set_recipient.clone());
+                    }
+                    updated_royalty.fee = fee;
+
+                    Ok(updated_royalty)
+                },
+            )?;
+        }
+    };
+
+    let recipient = deps.api.addr_humanize(&set_recipient).unwrap();
+    let res = Response::new()
+        .add_attribute("update_royalty", info.sender.to_string())
+        .add_attribute("royalty_fee", fee.to_string())
+        .add_attribute("recipient", recipient.to_string());
     Ok(res)
 }
 

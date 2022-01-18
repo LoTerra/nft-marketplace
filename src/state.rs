@@ -95,6 +95,14 @@ pub struct HistoryInfo {
 
 pub const HISTORIES: Map<&[u8], HistoryInfo> = Map::new("histories");
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct RoyaltyInfo {
+    pub creator: CanonicalAddr,
+    pub fee: Decimal,
+    pub recipient: Option<CanonicalAddr>,
+}
+pub const ROYALTY: Map<&[u8], RoyaltyInfo> = Map::new("royalty");
+
 /*
   User bid stats
 */
