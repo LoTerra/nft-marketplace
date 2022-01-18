@@ -30,6 +30,11 @@ pub enum ExecuteMsg {
     WithdrawNft { auction_id: u64 },
     /// Instant buy if allowed on the sale
     InstantBuy { auction_id: u64 },
+    /// Creator update ROYALTY
+    UpdateRoyalty {
+        fee: Decimal,
+        recipient: Option<String>,
+    },
     /// This accepts a properly-encoded ReceiveMsg from a cw721 contract
     ReceiveNft(Cw721ReceiveMsg),
     /// This accepts a properly-encoded ReceiveMsg from a cw20 contract
@@ -57,13 +62,23 @@ pub enum ReceiveMsg {
 #[serde(rename_all = "snake_case")]
 pub enum QueryMsg {
     /// Get auction by id
-    Auction { auction_id: u64 },
+    Auction {
+        auction_id: u64,
+    },
     /// Get bid info by auction id and address of the bidder
-    Bidder { auction_id: u64, address: String },
+    Bidder {
+        auction_id: u64,
+        address: String,
+    },
     /// Get bids history from an auction id
-    HistoryBids { auction_id: u64 },
+    HistoryBids {
+        auction_id: u64,
+    },
     /// Get bids history from an auction id
-    HistoryBidderBids { auction_id: u64, address: String },
+    HistoryBidderBids {
+        auction_id: u64,
+        address: String,
+    },
     /// Get config
     Config {},
     /// Get state
@@ -72,6 +87,10 @@ pub enum QueryMsg {
     AllAuctions {
         start_after: Option<u64>,
         limit: Option<u32>,
+    },
+    // Get Royalty info
+    Royalty {
+        address: String,
     },
 }
 
@@ -142,5 +161,13 @@ pub struct HistoryResponse {
 pub struct AllAuctionsResponse {
     pub auctions: Vec<(u64, AuctionResponse)>,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct RoyaltyResponse {
+    pub creator: String,
+    pub fee: Decimal,
+    pub recipient: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct MigrateMsg {}

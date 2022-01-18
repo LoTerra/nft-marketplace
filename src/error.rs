@@ -50,6 +50,9 @@ pub enum ContractError {
 
     #[error("You just reached the limit of 6 months auction max time end")]
     AuctionLimitReached {},
+
+    #[error("Max Royalty for creator is 10%")]
+    MaxRoyaltyReached {},
     // Add any other custom errors you like here.
     // Look at https://docs.rs/thiserror/1.0.21/thiserror/ for details.
 }
