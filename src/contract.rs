@@ -15,7 +15,7 @@ use crate::error::ContractError;
 use crate::msg::{
     AllAuctionsResponse, AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg,
     HistoryBidResponse, HistoryResponse, InstantiateMsg, MigrateMsg, QueryMsg, ReceiveMsg,
-    StateResponse,
+    RoyaltyResponse, StateResponse,
 };
 use crate::state::{
     BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, RoyaltyInfo, State, BIDS,
@@ -1230,6 +1230,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::AllAuctions { start_after, limit } => {
             to_binary(&query_all_auctions(deps, start_after, limit)?)
         }
+        QueryMsg::Royalty { address } => to_binary(&query_royalty(deps, env, address)?),
     }
 }
 
@@ -1421,9 +1422,32 @@ fn query_bidder(deps: Deps, _env: Env, auction_id: u64, address: String) -> StdR
     Ok(bid)
 }
 
+fn query_royalty(deps: Deps, _env: Env, address: String) -> StdResult<RoyaltyResponse> {
+    let raw_address = deps.api.addr_canonicalize(&address.as_str())?;
+    let store = ROYALTY
+        .load(deps.storage, &raw_address.as_slice())
+        .unwrap_or(RoyaltyInfo {
+            creator: raw_address,
+            fee: Decimal::from_str(DEFAULT_ROYALTY_FEE).unwrap(),
+            recipient: None,
+        });
+    let recipient = match store.recipient {
+        None => None,
+        Some(raw_recipient) => Some(deps.api.addr_humanize(&raw_recipient)?.to_string()),
+    };
+
+    Ok(RoyaltyResponse {
+        creator: deps.api.addr_humanize(&store.creator)?.to_string(),
+        fee: store.fee,
+        recipient,
+    })
+}
+
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Response> {
-    // let mut store = CONFIG.load(deps.storage)?;
+pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Response> {
+    let mut store = CONFIG.load(deps.storage)?;
+    store.lota_fee_low = Decimal::from_str("0.0150").unwrap();
+    CONFIG.save(deps.storage, &store)?;
     // store.lota_contract = deps.api.addr_canonicalize(Addr::unchecked("terra1342fp86c3z3q0lksq92lncjxpkfl9hujwh6xfn").as_ref())?;
     // CONFIG.save(deps.storage, &store)?;
     // ITEMS.update(
