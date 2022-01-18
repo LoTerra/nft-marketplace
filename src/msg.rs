@@ -94,6 +94,13 @@ pub enum QueryMsg {
     },
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryTalisMsg {
+    /// Get minter on Talis
+    MintingInfo {},
+}
+
 // We define a custom struct for each query response
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct AuctionResponse {
@@ -131,6 +138,7 @@ pub struct ConfigResponse {
     pub denom: String,
     pub bid_margin: Decimal,
     pub lota_fee: Decimal,
+    pub lota_fee_low: Decimal,
     pub lota_contract: String,
     pub sity_full_rewards: Decimal,
     pub sity_partial_rewards: Decimal,

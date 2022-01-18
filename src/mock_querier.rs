@@ -1,3 +1,5 @@
+use crate::msg::QueryTalisMsg;
+use crate::state::TalisInfo;
 use cosmwasm_bignumber::{Decimal256, Uint256};
 use cosmwasm_std::testing::{MockApi, MockQuerier, MockStorage, MOCK_CONTRACT_ADDR};
 use cosmwasm_std::{
@@ -54,9 +56,15 @@ impl WasmMockQuerier {
             QueryRequest::Wasm(WasmQuery::Smart { contract_addr, msg }) => {
                 if contract_addr == &"market".to_string() {
                     println!("{:?}", request);
-                    let msg_minter = cw20_base::state::MinterData {
+                    // CW-721 standard
+                    // let msg_minter = cw20_base::state::MinterData {
+                    //     minter: Addr::unchecked("terrans"),
+                    //     cap: None,
+                    // };
+                    // Talis
+                    let msg_minter = TalisInfo {
                         minter: Addr::unchecked("terrans"),
-                        cap: None,
+                        max_supply: 0,
                     };
                     return SystemResult::Ok(ContractResult::from(to_binary(&msg_minter)));
                 }

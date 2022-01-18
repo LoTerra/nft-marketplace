@@ -103,6 +103,12 @@ pub struct RoyaltyInfo {
 }
 pub const ROYALTY: Map<&[u8], RoyaltyInfo> = Map::new("royalty");
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct TalisInfo {
+    pub minter: Option<String>,
+    pub max_supply: Option<u64>,
+}
+
 /*
   User bid stats
 */

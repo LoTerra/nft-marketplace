@@ -1,10 +1,11 @@
 use cosmwasm_std::{
-    entry_point, from_binary, to_binary, BankMsg, Binary, Coin, ContractResult, CosmosMsg, Decimal,
-    Deps, DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult, SubMsg,
+    entry_point, from_binary, to_binary, Addr, BankMsg, Binary, Coin, ContractResult, CosmosMsg,
+    Decimal, Deps, DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult, SubMsg,
     SubMsgExecutionResponse, Uint128, WasmMsg, WasmQuery,
 };
 use cw2::set_contract_version;
 use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
+use cw20_base::state::MinterData;
 use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
 use cw_storage_plus::Bound;
 use std::convert::TryInto;
@@ -14,12 +15,12 @@ use std::str::FromStr;
 use crate::error::ContractError;
 use crate::msg::{
     AllAuctionsResponse, AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg,
-    HistoryBidResponse, HistoryResponse, InstantiateMsg, MigrateMsg, QueryMsg, ReceiveMsg,
-    RoyaltyResponse, StateResponse,
+    HistoryBidResponse, HistoryResponse, InstantiateMsg, MigrateMsg, QueryMsg, QueryTalisMsg,
+    ReceiveMsg, RoyaltyResponse, StateResponse,
 };
 use crate::state::{
-    BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, RoyaltyInfo, State, BIDS,
-    CONFIG, HISTORIES, HISTORIES_BIDDER, ITEMS, ROYALTY, STATE,
+    BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, RoyaltyInfo, State,
+    TalisInfo, BIDS, CONFIG, HISTORIES, HISTORIES_BIDDER, ITEMS, ROYALTY, STATE,
 };
 use crate::taxation::deduct_tax;
 
@@ -499,9 +500,25 @@ pub fn execute_withdraw_nft(
         contract_addr: contract_address.to_string(),
         msg: to_binary(&minter_msg)?,
     };
-    let res: cw20_base::state::MinterData = deps.querier.query(&wasm.into())?;
+    let res: cw20_base::state::MinterData =
+        deps.querier.query(&wasm.into()).unwrap_or(MinterData {
+            minter: Addr::unchecked("talis"),
+            cap: None,
+        });
 
-    let minter = deps.api.addr_canonicalize(&res.minter.to_string())?;
+    let minter = if res.minter.to_string() == "talis".to_string() {
+        let minter_msg = QueryTalisMsg::MintingInfo {};
+        let wasm = WasmQuery::Smart {
+            contract_addr: contract_address.to_string(),
+            msg: to_binary(&minter_msg)?,
+        };
+        let res: TalisInfo = deps.querier.query(&wasm.into())?;
+
+        deps.api.addr_canonicalize(&res.minter.unwrap())?
+    } else {
+        deps.api.addr_canonicalize(&res.minter.to_string())?
+    };
+
     let royalty = ROYALTY
         .load(deps.storage, &minter.as_slice())
         .unwrap_or(RoyaltyInfo {
@@ -1348,6 +1365,7 @@ fn query_config(deps: Deps, _env: Env) -> StdResult<ConfigResponse> {
         denom: config.denom,
         bid_margin: config.bid_margin,
         lota_fee: config.lota_fee,
+        lota_fee_low: config.lota_fee_low,
         lota_contract: deps.api.addr_humanize(&config.lota_contract)?.to_string(),
         sity_full_rewards: config.sity_full_rewards,
         sity_partial_rewards: config.sity_partial_rewards,
