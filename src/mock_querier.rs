@@ -66,6 +66,7 @@ impl WasmMockQuerier {
                         minter: Some("terrans".to_string()),
                         max_supply: None,
                     };
+                    //let msg_minter = cw20::BalanceResponse{ balance: Uint128::from(100_u128) };
                     return SystemResult::Ok(ContractResult::from(to_binary(&msg_minter)));
                 }
                 panic!("DO NOT ENTER HERE")
