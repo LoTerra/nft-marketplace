@@ -1154,7 +1154,7 @@ pub fn execute_update_royalty(
                 |royalty| -> StdResult<_> {
                     let mut updated_royalty = royalty.unwrap();
 
-                    if let Some(_) = recipient {
+                    if recipient.is_some() {
                         updated_royalty.recipient = Some(set_recipient.clone());
                     }
                     updated_royalty.fee = fee;
