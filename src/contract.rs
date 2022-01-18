@@ -512,19 +512,20 @@ pub fn execute_withdraw_nft(
             contract_addr: contract_address.to_string(),
             msg: to_binary(&minter_msg)?,
         };
-        let res: TalisInfo = deps.querier.query(&wasm.into()).unwrap_or(
-            TalisInfo{ minter: Some("undefined".to_string()), max_supply: None });
+        let res: TalisInfo = deps.querier.query(&wasm.into()).unwrap_or(TalisInfo {
+            minter: Some("undefined".to_string()),
+            max_supply: None,
+        });
 
         if let Some(minter) = res.minter.clone() {
             if minter == "undefined" {
                 None
-            }else {
+            } else {
                 Some(deps.api.addr_canonicalize(&res.minter.unwrap())?)
             }
-        }else {
+        } else {
             None
         }
-
     } else {
         Some(deps.api.addr_canonicalize(&res.minter.to_string())?)
     };
