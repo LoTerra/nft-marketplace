@@ -63,8 +63,8 @@ impl WasmMockQuerier {
                     // };
                     // Talis
                     let msg_minter = TalisInfo {
-                        minter: Addr::unchecked("terrans"),
-                        max_supply: 0,
+                        minter: Some("terrans".to_string()),
+                        max_supply: None,
                     };
                     return SystemResult::Ok(ContractResult::from(to_binary(&msg_minter)));
                 }

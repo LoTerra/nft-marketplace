@@ -31,7 +31,7 @@ const MIN_TIME_AUCTION: u64 = 600; // 10 min
 const MAX_TIME_AUCTION: u64 = 15778800; // 6 months max
 const LAST_MINUTE_BID_EXTRA_TIME: u64 = 600; // 10 min
 const ROYALTY_MAX_FEE: &str = "0.10"; // 10% or 10/100
-const DEFAULT_ROYALTY_FEE: &str = "0.01"; // 1% or 1/100
+const DEFAULT_ROYALTY_FEE: &str = "0"; // 1% or 1/100
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -514,23 +514,33 @@ pub fn execute_withdraw_nft(
         };
         let res: TalisInfo = deps.querier.query(&wasm.into())?;
 
-        deps.api.addr_canonicalize(&res.minter.unwrap())?
+        if res.minter.is_some() {
+            Some(deps.api.addr_canonicalize(&res.minter.unwrap())?)
+        } else {
+            None
+        }
     } else {
-        deps.api.addr_canonicalize(&res.minter.to_string())?
+        Some(deps.api.addr_canonicalize(&res.minter.to_string())?)
     };
 
-    let royalty = ROYALTY
-        .load(deps.storage, &minter.as_slice())
-        .unwrap_or(RoyaltyInfo {
-            creator: minter.clone(),
-            fee: Decimal::from_str(DEFAULT_ROYALTY_FEE).unwrap(),
-            recipient: None,
-        });
     // Set the recipient
-    let raw_royalty_recipient = if let Some(recipient) = royalty.recipient {
-        recipient
+    let royalty = if let Some(minter) = minter {
+        let royalty_info = ROYALTY
+            .load(deps.storage, &minter.as_slice())
+            .unwrap_or(RoyaltyInfo {
+                creator: minter.clone(),
+                fee: Decimal::from_str(DEFAULT_ROYALTY_FEE).unwrap(),
+                recipient: None,
+            });
+
+        let raw_royalty_recipient = if let Some(recipient) = royalty_info.clone().recipient {
+            recipient
+        } else {
+            minter
+        };
+        Some((raw_royalty_recipient, royalty_info))
     } else {
-        minter
+        None
     };
 
     if item.resolved {
@@ -568,9 +578,10 @@ pub fn execute_withdraw_nft(
         highest_bid_amount = highest_bid;
         net_amount_after = highest_bid;
 
-        // Apply Royalty fee
-        royalty_fee_amount = net_amount_after.mul(royalty.fee);
-        net_amount_after = net_amount_after.checked_sub(royalty_fee_amount).unwrap();
+        if let Some(royalty) = royalty.clone() {
+            // Apply Royalty fee
+            royalty_fee_amount = net_amount_after.mul(royalty.1.fee);
+        }
 
         // Apply fee if it is not a private sale or lower fee if it is a private sale
         if !item.private_sale {
@@ -579,6 +590,7 @@ pub fn execute_withdraw_nft(
             lota_fee_amount = net_amount_after.mul(config.lota_fee_low);
         }
         net_amount_after = net_amount_after.checked_sub(lota_fee_amount).unwrap();
+        net_amount_after = net_amount_after.checked_sub(royalty_fee_amount).unwrap();
 
         if let Some(charity) = item.charity {
             charity_amount = net_amount_after.mul(charity.fee_percentage);
@@ -663,16 +675,18 @@ pub fn execute_withdraw_nft(
            Prepare msg send Royalty to minter
         */
         if !royalty_fee_amount.is_zero() {
-            msgs.push(CosmosMsg::Bank(BankMsg::Send {
-                to_address: deps.api.addr_humanize(&raw_royalty_recipient)?.to_string(),
-                amount: vec![deduct_tax(
-                    &deps.querier,
-                    Coin {
-                        denom: config.denom.clone(),
-                        amount: royalty_fee_amount,
-                    },
-                )?],
-            }));
+            if let Some(royalty) = royalty {
+                msgs.push(CosmosMsg::Bank(BankMsg::Send {
+                    to_address: deps.api.addr_humanize(&royalty.0)?.to_string(),
+                    amount: vec![deduct_tax(
+                        &deps.querier,
+                        Coin {
+                            denom: config.denom.clone(),
+                            amount: royalty_fee_amount,
+                        },
+                    )?],
+                }));
+            }
         }
 
         /*
@@ -2731,6 +2745,18 @@ mod tests {
             execute_msg,
         )
         .unwrap();
+        // Update Royalty
+        let royalty_msg = ExecuteMsg::UpdateRoyalty {
+            fee: Decimal::from_str("0.1").unwrap(),
+            recipient: None,
+        };
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("terrans", &vec![]),
+            royalty_msg,
+        )
+        .unwrap();
         /*
            Place bid
         */
@@ -2795,21 +2821,21 @@ mod tests {
             to_address: "sender".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(93_118_811u128),
+                amount: Uint128::from(84_158_415u128),
             }],
         });
         let message_five = CosmosMsg::Bank(BankMsg::Send {
             to_address: "terrans".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(990_099u128),
+                amount: Uint128::from(9_900_990u128),
             }],
         });
         let message_six = CosmosMsg::Bank(BankMsg::Send {
             to_address: "loterra".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(4_900_990u128),
+                amount: Uint128::from(4_950_495u128),
             }],
         });
 
@@ -3068,21 +3094,21 @@ mod tests {
             to_address: "sender".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(1_642_820_750u128),
+                amount: Uint128::from(1_490_425_000u128),
             }],
         });
         let message_five = CosmosMsg::Bank(BankMsg::Send {
             to_address: "terrans".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(16_732_673u128),
+                amount: Uint128::from(1_68_000_000u128),
             }],
         });
         let message_six = CosmosMsg::Bank(BankMsg::Send {
             to_address: "loterra".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(28_989_356u128),
+                amount: Uint128::from(29_282_178u128),
             }],
         });
 
