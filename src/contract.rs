@@ -51,6 +51,7 @@ pub fn instantiate(
         sity_partial_rewards: msg.sity_partial_rewards,
         sity_fee_registration: msg.sity_fee_registration,
         sity_min_opening: msg.sity_min_opening,
+        cancellation_fee: Decimal::zero(),
     };
 
     CONFIG.save(deps.storage, &config)?;
@@ -107,6 +108,9 @@ pub fn execute(
         }
         ExecuteMsg::ReceiveNft(msg) => execute_receive_cw721(deps, env, info, msg),
         ExecuteMsg::Receive(msg) => execute_receive_cw20(deps, env, info, msg),
+        ExecuteMsg::CancelAuction { auction_id } => {
+            execute_cancel_auction(deps, env, info, auction_id)
+        }
     }
 }
 
@@ -1208,6 +1212,110 @@ pub fn execute_update_royalty(
         .add_attribute("update_royalty", info.sender.to_string())
         .add_attribute("royalty_fee", fee.to_string())
         .add_attribute("recipient", recipient.to_string());
+    Ok(res)
+}
+
+pub fn execute_cancel_auction(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    auction_id: u64,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+
+    let item = match ITEMS.may_load(deps.storage, &auction_id.to_be_bytes())? {
+        None => return Err(ContractError::Unauthorized {}),
+        Some(auction) => auction,
+    };
+    let raw_sender = deps.api.addr_canonicalize(info.sender.as_str())?;
+    if raw_sender != item.creator {
+        return Err(ContractError::Unauthorized {});
+    }
+    let mut msgs = vec![];
+    // Check if this auction need fees
+    let fee_indicator = if let Some(highest_bid) = item.highest_bid {
+        let sent = match info.funds.len() {
+            0 => Err(ContractError::EmptyFunds {}),
+            1 => {
+                if info.funds[0].denom != config.denom {
+                    return Err(ContractError::WrongDenom {});
+                }
+                Ok(info.funds[0].amount)
+            }
+            _ => Err(ContractError::MultipleDenoms {}),
+        }?;
+
+        let cancellation_fee = highest_bid.mul(config.cancellation_fee);
+
+        if sent != cancellation_fee {
+            return Err(ContractError::CancelAuctionFee(
+                sent.to_string(),
+                config.denom,
+            ));
+        }
+
+        // Fee for highest bidder
+        if let Some(highest_bidder) = item.highest_bidder {
+            // send split amount
+            let split_amount = Decimal::from_str("0.5").unwrap();
+            // prepare message for highest bidder
+            msgs.push(CosmosMsg::Bank(BankMsg::Send {
+                to_address: deps.api.addr_humanize(&highest_bidder)?.to_string(),
+                amount: vec![deduct_tax(
+                    &deps.querier,
+                    Coin {
+                        denom: config.denom.clone(),
+                        amount: cancellation_fee.mul(split_amount),
+                    },
+                )?],
+            }));
+            // prepare message for fee recipient
+            msgs.push(CosmosMsg::Bank(BankMsg::Send {
+                to_address: deps.api.addr_humanize(&config.lota_contract)?.to_string(),
+                amount: vec![deduct_tax(
+                    &deps.querier,
+                    Coin {
+                        denom: config.denom.clone(),
+                        amount: cancellation_fee.mul(split_amount),
+                    },
+                )?],
+            }));
+        } else {
+            // Send the full amount
+            msgs.push(CosmosMsg::Bank(BankMsg::Send {
+                to_address: deps.api.addr_humanize(&config.lota_contract)?.to_string(),
+                amount: vec![deduct_tax(
+                    &deps.querier,
+                    Coin {
+                        denom: config.denom.clone(),
+                        amount: cancellation_fee,
+                    },
+                )?],
+            }));
+        }
+        // Return cancellation_fee
+        cancellation_fee
+    } else {
+        Uint128::zero()
+    };
+
+    ITEMS.update(
+        deps.storage,
+        &auction_id.to_be_bytes(),
+        |item| -> StdResult<_> {
+            let mut updated_item = item.unwrap();
+            updated_item.end_time = env.block.time.minus_seconds(MIN_TIME_AUCTION).seconds();
+            updated_item.highest_bid = None;
+            //updated_item.highest_bidder = None;
+
+            Ok(updated_item)
+        },
+    )?;
+
+    let res = Response::new()
+        .add_messages(msgs)
+        .add_attribute("cancel_auction", auction_id.to_string())
+        .add_attribute("cancellation_fee", fee_indicator.to_string());
     Ok(res)
 }
 

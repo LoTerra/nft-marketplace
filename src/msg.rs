@@ -30,6 +30,8 @@ pub enum ExecuteMsg {
     WithdrawNft { auction_id: u64 },
     /// Instant buy if allowed on the sale
     InstantBuy { auction_id: u64 },
+    /// Cancel auction
+    CancelAuction { auction_id: u64 },
     /// Creator update ROYALTY
     UpdateRoyalty {
         fee: Decimal,
