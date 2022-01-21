@@ -1351,7 +1351,8 @@ pub fn execute_cancel_auction(
 
     let res = Response::new()
         .add_messages(msgs)
-        .add_attribute("cancel_auction", auction_id.to_string())
+        .add_attribute("action", "cancel_auction".to_string())
+        .add_attribute("auction_id", auction_id.to_string())
         .add_attribute("cancellation_fee", fee_indicator.to_string());
     Ok(res)
 }
@@ -3745,7 +3746,11 @@ mod tests {
             res.attributes,
             vec![
                 Attribute {
-                    key: "cancel_auction".to_string(),
+                    key: "action".to_string(),
+                    value: "cancel_auction".to_string()
+                },
+                Attribute {
+                    key: "auction_id".to_string(),
                     value: "0".to_string()
                 },
                 Attribute {
@@ -3876,7 +3881,11 @@ mod tests {
             res.attributes,
             vec![
                 Attribute {
-                    key: "cancel_auction".to_string(),
+                    key: "action".to_string(),
+                    value: "cancel_auction".to_string()
+                },
+                Attribute {
+                    key: "auction_id".to_string(),
                     value: "1".to_string()
                 },
                 Attribute {
