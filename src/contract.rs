@@ -1531,6 +1531,7 @@ fn query_config(deps: Deps, _env: Env) -> StdResult<ConfigResponse> {
         sity_partial_rewards: config.sity_partial_rewards,
         sity_fee_registration: config.sity_fee_registration,
         sity_min_opening: config.sity_min_opening,
+        cancellation_fee: config.cancellation_fee,
     })
 }
 
@@ -3720,16 +3721,31 @@ mod tests {
             execute_msg.clone(),
         )
         .unwrap();
+        //println!("{:?}", res);
+        assert_eq!(res.messages.len(), 0);
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "cancel_auction".to_string(),
+                    value: "0".to_string()
+                },
+                Attribute {
+                    key: "cancellation_fee".to_string(),
+                    value: "0".to_string()
+                },
+            ]
+        );
         // Handle cancelling multiple times
-        let res = execute(
+        let err = execute(
             deps.as_mut(),
             env.clone(),
             mock_info("sender", &vec![]),
             execute_msg,
         )
         .unwrap_err();
-        //assert_eq!(res.messages)
-        println!("{:?}", res);
+        assert_eq!(err, ContractError::EndTimeExpired {});
+
         // Withdraw the NFT
         let execute_msg = ExecuteMsg::WithdrawNft { auction_id: 0 };
         let res = execute(
@@ -3739,7 +3755,16 @@ mod tests {
             execute_msg,
         )
         .unwrap();
-        println!("{:?}", res);
+        let cw721_msg = cw721::Cw721ExecuteMsg::TransferNft {
+            recipient: "sender".to_string(),
+            token_id: "test".to_string(),
+        };
+        let cosmwasm_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: "market".to_string(),
+            msg: to_binary(&cw721_msg).unwrap(),
+            funds: vec![],
+        });
+        assert_eq!(res.messages, vec![SubMsg::new(cosmwasm_msg)]);
 
         let execute_msg = create_msg_nft(
             None,
@@ -3760,6 +3785,7 @@ mod tests {
         .unwrap();
 
         let execute_msg = ExecuteMsg::PlaceBid { auction_id: 1 };
+        let bid_amount = Uint128::from(100_000_000u128);
         let res = execute(
             deps.as_mut(),
             env.clone(),
@@ -3767,7 +3793,7 @@ mod tests {
                 "alice",
                 &vec![Coin {
                     denom: "uusd".to_string(),
-                    amount: Uint128::from(100_000_000u128),
+                    amount: bid_amount,
                 }],
             ),
             execute_msg,
@@ -3775,7 +3801,7 @@ mod tests {
         .unwrap();
 
         let execute_msg = ExecuteMsg::CancelAuction { auction_id: 1 };
-        let res = execute(
+        let err = execute(
             deps.as_mut(),
             env.clone(),
             mock_info(
@@ -3788,6 +3814,11 @@ mod tests {
             execute_msg.clone(),
         )
         .unwrap_err();
+        let cancellation_fee = bid_amount.mul(config.cancellation_fee);
+        assert_eq!(
+            err,
+            ContractError::CancelAuctionFee(cancellation_fee.to_string(), "uusd".to_string())
+        );
 
         let res = execute(
             deps.as_mut(),
@@ -3796,14 +3827,46 @@ mod tests {
                 "sender",
                 &vec![Coin {
                     denom: "uusd".to_string(),
-                    amount: Uint128::from(10_000_000u128),
+                    amount: cancellation_fee,
                 }],
             ),
             execute_msg.clone(),
         )
         .unwrap();
+        // Split the amount between the highest bidder and fee contract collector here LoTerra staking contract
+        let bank_msg_one = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "alice".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(4_950_495u128),
+            }],
+        });
+        let bank_msg_two = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "loterra".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(4_950_495u128),
+            }],
+        });
 
-        //println!("{:?}", res);
+        assert_eq!(res.messages.len(), 2);
+        assert_eq!(
+            res.messages,
+            vec![SubMsg::new(bank_msg_one), SubMsg::new(bank_msg_two)]
+        );
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "cancel_auction".to_string(),
+                    value: "1".to_string()
+                },
+                Attribute {
+                    key: "cancellation_fee".to_string(),
+                    value: cancellation_fee.to_string()
+                },
+            ]
+        );
         // ALICE retract bid success since auction was cancelled
         let execute_msg = ExecuteMsg::RetractBids { auction_id: 1 };
         let res = execute(
@@ -3813,8 +3876,45 @@ mod tests {
             execute_msg,
         )
         .unwrap();
-        println!("{:?}", res);
-        // Withdraw the NFT
+        let bank_msg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "alice".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(99_009_900u128),
+            }],
+        });
+        let mint_sity_msg = cw20::Cw20ExecuteMsg::Mint {
+            recipient: "alice".to_string(),
+            amount: Uint128::from(1_000_000u128),
+        };
+        let wasm_msg = WasmMsg::Execute {
+            contract_addr: "cosmos2contract".to_string(),
+            msg: to_binary(&mint_sity_msg).unwrap(),
+            funds: vec![],
+        };
+        assert_eq!(res.messages.len(), 2);
+        assert_eq!(
+            res.messages,
+            vec![SubMsg::new(bank_msg), SubMsg::new(wasm_msg)]
+        );
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "auction_id".to_string(),
+                    value: "1".to_string()
+                },
+                Attribute {
+                    key: "refund_amount".to_string(),
+                    value: "100000000".to_string()
+                },
+                Attribute {
+                    key: "recipient".to_string(),
+                    value: "alice".to_string()
+                }
+            ]
+        );
+        // Withdraw the NFT sender get back his NFT
         let execute_msg = ExecuteMsg::WithdrawNft { auction_id: 1 };
         let res = execute(
             deps.as_mut(),
@@ -3823,6 +3923,42 @@ mod tests {
             execute_msg,
         )
         .unwrap();
+        assert_eq!(res.messages.len(), 1);
+        let cw721_msg = cw721::Cw721ExecuteMsg::TransferNft {
+            recipient: "sender".to_string(),
+            token_id: "test".to_string(),
+        };
+        let cosmwasm_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: "market".to_string(),
+            msg: to_binary(&cw721_msg).unwrap(),
+            funds: vec![],
+        });
+        assert_eq!(res.messages, vec![SubMsg::new(cosmwasm_msg)]);
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "auction_type".to_string(),
+                    value: "NFT".to_string()
+                },
+                Attribute {
+                    key: "auction_id".to_string(),
+                    value: "1".to_string()
+                },
+                Attribute {
+                    key: "sender".to_string(),
+                    value: "sender".to_string()
+                },
+                Attribute {
+                    key: "creator".to_string(),
+                    value: "sender".to_string()
+                },
+                Attribute {
+                    key: "recipient".to_string(),
+                    value: "sender".to_string()
+                },
+            ]
+        );
         println!("{:?}", res);
     }
 }

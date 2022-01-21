@@ -146,6 +146,7 @@ pub struct ConfigResponse {
     pub sity_partial_rewards: Decimal,
     pub sity_fee_registration: Decimal,
     pub sity_min_opening: Uint128,
+    pub cancellation_fee: Decimal,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
