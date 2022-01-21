@@ -15,7 +15,6 @@ pub struct Config {
     pub sity_partial_rewards: Decimal,
     pub sity_fee_registration: Decimal,
     pub sity_min_opening: Uint128,
-    pub cancellation_fee: Decimal,
 }
 pub const CONFIG: Item<Config> = Item::new("config");
 
@@ -26,6 +25,13 @@ pub struct State {
 }
 
 pub const STATE: Item<State> = Item::new("state");
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct Cancellation {
+    pub cancellation_fee: Decimal,
+}
+
+pub const CANCELLATION: Item<Cancellation> = Item::new("cancellation");
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct CharityInfo {

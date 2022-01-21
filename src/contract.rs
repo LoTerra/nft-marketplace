@@ -19,8 +19,9 @@ use crate::msg::{
     ReceiveMsg, RoyaltyResponse, StateResponse,
 };
 use crate::state::{
-    BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, RoyaltyInfo, State,
-    TalisInfo, BIDS, CONFIG, HISTORIES, HISTORIES_BIDDER, ITEMS, ROYALTY, STATE,
+    BidInfo, Cancellation, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, RoyaltyInfo,
+    State, TalisInfo, BIDS, CANCELLATION, CONFIG, HISTORIES, HISTORIES_BIDDER, ITEMS, ROYALTY,
+    STATE,
 };
 use crate::taxation::deduct_tax;
 
@@ -51,7 +52,6 @@ pub fn instantiate(
         sity_partial_rewards: msg.sity_partial_rewards,
         sity_fee_registration: msg.sity_fee_registration,
         sity_min_opening: msg.sity_min_opening,
-        cancellation_fee: Decimal::zero(),
     };
 
     CONFIG.save(deps.storage, &config)?;
@@ -61,6 +61,11 @@ pub fn instantiate(
         cw20_address: deps.api.addr_canonicalize(&env.contract.address.as_str())?,
     };
     STATE.save(deps.storage, &state)?;
+
+    let cancellation = Cancellation {
+        cancellation_fee: Default::default(),
+    };
+    CANCELLATION.save(deps.storage, &cancellation)?;
     /*
        Instantiate a cw20, privilege using this cw20 like private sale...
     */
@@ -1249,6 +1254,7 @@ pub fn execute_cancel_auction(
     auction_id: u64,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
+    let cancellation = CANCELLATION.load(deps.storage)?;
 
     let item = match ITEMS.may_load(deps.storage, &auction_id.to_be_bytes())? {
         None => return Err(ContractError::Unauthorized {}),
@@ -1276,7 +1282,7 @@ pub fn execute_cancel_auction(
             _ => Err(ContractError::MultipleDenoms {}),
         }?;
 
-        let cancellation_fee = highest_bid.mul(config.cancellation_fee);
+        let cancellation_fee = highest_bid.mul(cancellation.cancellation_fee);
 
         if sent != cancellation_fee {
             return Err(ContractError::CancelAuctionFee(
@@ -1521,6 +1527,7 @@ fn query_bidder_bids(
 
 fn query_config(deps: Deps, _env: Env) -> StdResult<ConfigResponse> {
     let config = CONFIG.load(deps.storage)?;
+    let cancellation = CANCELLATION.load(deps.storage)?;
     Ok(ConfigResponse {
         denom: config.denom,
         bid_margin: config.bid_margin,
@@ -1531,7 +1538,7 @@ fn query_config(deps: Deps, _env: Env) -> StdResult<ConfigResponse> {
         sity_partial_rewards: config.sity_partial_rewards,
         sity_fee_registration: config.sity_fee_registration,
         sity_min_opening: config.sity_min_opening,
-        cancellation_fee: config.cancellation_fee,
+        cancellation_fee: cancellation.cancellation_fee,
     })
 }
 
@@ -1624,9 +1631,10 @@ fn query_royalty(deps: Deps, _env: Env, address: String) -> StdResult<RoyaltyRes
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Response> {
-    let mut store = CONFIG.load(deps.storage)?;
-    store.cancellation_fee = Decimal::from_str("0.1").unwrap();
-    CONFIG.save(deps.storage, &store)?;
+    let cancellation = Cancellation {
+        cancellation_fee: Decimal::from_str("0.1").unwrap(),
+    };
+    CANCELLATION.save(deps.storage, &cancellation)?;
     // store.lota_contract = deps.api.addr_canonicalize(Addr::unchecked("terra1342fp86c3z3q0lksq92lncjxpkfl9hujwh6xfn").as_ref())?;
     // CONFIG.save(deps.storage, &store)?;
     // ITEMS.update(
@@ -3689,8 +3697,9 @@ mod tests {
         let mut deps = mock_dependencies_custom(&coins(2, "token"));
         init_default(deps.as_mut());
         let mut config = CONFIG.load(deps.as_ref().storage).unwrap();
-        config.cancellation_fee = Decimal::from_str("0.1").unwrap();
-        CONFIG.save(deps.as_mut().storage, &config);
+        let mut cancellation = CANCELLATION.load(deps.as_ref().storage).unwrap();
+        cancellation.cancellation_fee = Decimal::from_str("0.1").unwrap();
+        CANCELLATION.save(deps.as_mut().storage, &cancellation);
 
         // Create auction with end_time inferior current time
         let env = mock_env();
@@ -3711,6 +3720,15 @@ mod tests {
             execute_msg,
         )
         .unwrap();
+        let execute_msg = ExecuteMsg::CancelAuction { auction_id: 0 };
+
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("not_sender", &vec![]),
+            execute_msg.clone(),
+        )
+        .unwrap_err();
 
         let execute_msg = ExecuteMsg::CancelAuction { auction_id: 0 };
 
@@ -3814,7 +3832,7 @@ mod tests {
             execute_msg.clone(),
         )
         .unwrap_err();
-        let cancellation_fee = bid_amount.mul(config.cancellation_fee);
+        let cancellation_fee = bid_amount.mul(cancellation.cancellation_fee);
         assert_eq!(
             err,
             ContractError::CancelAuctionFee(cancellation_fee.to_string(), "uusd".to_string())

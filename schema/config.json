@@ -4,7 +4,6 @@
   "type": "object",
   "required": [
     "bid_margin",
-    "cancellation_fee",
     "denom",
     "lota_contract",
     "lota_fee",
@@ -16,9 +15,6 @@
   ],
   "properties": {
     "bid_margin": {
-      "$ref": "#/definitions/Decimal"
-    },
-    "cancellation_fee": {
       "$ref": "#/definitions/Decimal"
     },
     "denom": {
