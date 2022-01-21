@@ -442,17 +442,6 @@ pub fn execute_retract_bids(
         return Err(ContractError::Unauthorized {});
     }
 
-    BIDS.update(
-        deps.storage,
-        (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-        |bid| -> StdResult<_> {
-            let mut update_bid = bid.unwrap();
-            update_bid.total_bid = Uint128::zero();
-            update_bid.resolved = true;
-            Ok(update_bid)
-        },
-    )?;
-
     let bank_msg = CosmosMsg::Bank(BankMsg::Send {
         to_address: info.sender.to_string(),
         amount: vec![deduct_tax(
@@ -478,6 +467,17 @@ pub fn execute_retract_bids(
         });
         msgs.push(execute_privilege_msg);
     }
+
+    BIDS.update(
+        deps.storage,
+        (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+        |bid| -> StdResult<_> {
+            let mut update_bid = bid.unwrap();
+            update_bid.total_bid = Uint128::zero();
+            update_bid.resolved = true;
+            Ok(update_bid)
+        },
+    )?;
 
     let res = Response::new()
         .add_messages(msgs)
@@ -510,12 +510,39 @@ pub fn execute_withdraw_nft(
             cap: None,
         });
 
+    // let minter = if res.unwrap_err() {
+    //     let minter_msg = QueryTalisMsg::MintingInfo {};
+    //     let wasm = WasmQuery::Smart {
+    //         contract_addr: contract_address.to_string(),
+    //         msg: to_binary(&minter_msg)?,
+    //     };
+    //
+    //     let res: TalisInfo = deps.querier.query(&wasm.into()).unwrap_or(TalisInfo {
+    //         minter: Some("undefined".to_string()),
+    //         max_supply: None,
+    //     });
+    //
+    //     if let Some(minter) = res.minter.clone() {
+    //         if minter == "undefined" {
+    //             None
+    //         } else {
+    //             Some(deps.api.addr_canonicalize(&res.minter.unwrap())?)
+    //         }
+    //     } else {
+    //         None
+    //     }
+    // }else {
+    //
+    //     //Some(deps.api.addr_canonicalize(&res.minter.to_string())?)
+    // };
+
     let minter = if res.minter == "talis" {
         let minter_msg = QueryTalisMsg::MintingInfo {};
         let wasm = WasmQuery::Smart {
             contract_addr: contract_address.to_string(),
             msg: to_binary(&minter_msg)?,
         };
+
         let res: TalisInfo = deps.querier.query(&wasm.into()).unwrap_or(TalisInfo {
             minter: Some("undefined".to_string()),
             max_supply: None,
@@ -1227,6 +1254,10 @@ pub fn execute_cancel_auction(
         None => return Err(ContractError::Unauthorized {}),
         Some(auction) => auction,
     };
+    // Verify if auction ended
+    if item.end_time < env.block.time.seconds() {
+        return Err(ContractError::EndTimeExpired {});
+    }
     let raw_sender = deps.api.addr_canonicalize(info.sender.as_str())?;
     if raw_sender != item.creator {
         return Err(ContractError::Unauthorized {});
@@ -1249,7 +1280,7 @@ pub fn execute_cancel_auction(
 
         if sent != cancellation_fee {
             return Err(ContractError::CancelAuctionFee(
-                sent.to_string(),
+                cancellation_fee.to_string(),
                 config.denom,
             ));
         }
@@ -1305,8 +1336,8 @@ pub fn execute_cancel_auction(
         |item| -> StdResult<_> {
             let mut updated_item = item.unwrap();
             updated_item.end_time = env.block.time.minus_seconds(MIN_TIME_AUCTION).seconds();
-            updated_item.highest_bid = None;
-            //updated_item.highest_bidder = None;
+            //updated_item.highest_bid = None;
+            updated_item.highest_bidder = None;
 
             Ok(updated_item)
         },
@@ -1593,7 +1624,7 @@ fn query_royalty(deps: Deps, _env: Env, address: String) -> StdResult<RoyaltyRes
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Response> {
     let mut store = CONFIG.load(deps.storage)?;
-    store.lota_fee_low = Decimal::from_str("0.0150").unwrap();
+    store.cancellation_fee = Decimal::from_str("0.1").unwrap();
     CONFIG.save(deps.storage, &store)?;
     // store.lota_contract = deps.api.addr_canonicalize(Addr::unchecked("terra1342fp86c3z3q0lksq92lncjxpkfl9hujwh6xfn").as_ref())?;
     // CONFIG.save(deps.storage, &store)?;
@@ -3403,7 +3434,7 @@ mod tests {
     #[test]
     fn instant_buy() {
         /*
-           Withdraw nft creator no bidders
+           Instant buy creator no bidders
         */
         let mut deps = mock_dependencies_custom(&coins(2, "token"));
         init_default(deps.as_mut());
@@ -3651,4 +3682,147 @@ mod tests {
     //         .unwrap_err();
     //     println!("{:?}", res);
     // }
+
+    #[test]
+    fn cancel_auction() {
+        let mut deps = mock_dependencies_custom(&coins(2, "token"));
+        init_default(deps.as_mut());
+        let mut config = CONFIG.load(deps.as_ref().storage).unwrap();
+        config.cancellation_fee = Decimal::from_str("0.1").unwrap();
+        CONFIG.save(deps.as_mut().storage, &config);
+
+        // Create auction with end_time inferior current time
+        let env = mock_env();
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+
+        let execute_msg = ExecuteMsg::CancelAuction { auction_id: 0 };
+
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("sender", &vec![]),
+            execute_msg.clone(),
+        )
+        .unwrap();
+        // Handle cancelling multiple times
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("sender", &vec![]),
+            execute_msg,
+        )
+        .unwrap_err();
+        //assert_eq!(res.messages)
+        println!("{:?}", res);
+        // Withdraw the NFT
+        let execute_msg = ExecuteMsg::WithdrawNft { auction_id: 0 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("sender", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        println!("{:?}", res);
+
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 1 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "alice",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(100_000_000u128),
+                }],
+            ),
+            execute_msg,
+        )
+        .unwrap();
+
+        let execute_msg = ExecuteMsg::CancelAuction { auction_id: 1 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "sender",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(1_000_000u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap_err();
+
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "sender",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(10_000_000u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap();
+
+        //println!("{:?}", res);
+        // ALICE retract bid success since auction was cancelled
+        let execute_msg = ExecuteMsg::RetractBids { auction_id: 1 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("alice", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        println!("{:?}", res);
+        // Withdraw the NFT
+        let execute_msg = ExecuteMsg::WithdrawNft { auction_id: 1 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("sender", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        println!("{:?}", res);
+    }
 }
