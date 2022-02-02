@@ -476,7 +476,7 @@ pub fn execute_retract_bids(
     BIDS.update(
         deps.storage,
         (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-        |bid| -> StdResult<_> {
+        |bid| -> StdResult<BidInfo> {
             let mut update_bid = bid.unwrap();
             update_bid.total_bid = Uint128::zero();
             update_bid.resolved = true;
@@ -645,7 +645,7 @@ pub fn execute_withdraw_nft(
     ITEMS.update(
         deps.storage,
         &auction_id.to_be_bytes(),
-        |item| -> StdResult<_> {
+        |item| -> StdResult<ItemInfo> {
             let mut update_item = item.unwrap();
             update_item.resolved = true;
             Ok(update_item)
@@ -801,6 +801,10 @@ pub fn execute_place_bid(
 
     let item = ITEMS.load(deps.storage, &auction_id.to_be_bytes())?;
 
+    // Verify if auction is resolved
+    if item.resolved {
+        return Err(ContractError::Unauthorized {});
+    }
     // Verify if auction ended
     if item.end_time < env.block.time.seconds() {
         return Err(ContractError::EndTimeExpired {});
@@ -865,7 +869,7 @@ pub fn execute_place_bid(
     ITEMS.update(
         deps.storage,
         &auction_id.to_be_bytes(),
-        |item| -> StdResult<_> {
+        |item| -> StdResult<ItemInfo> {
             let mut updated_item = item.unwrap();
             // Cannot bid more than the instant buy price
             match updated_item.instant_buy {
@@ -920,7 +924,7 @@ pub fn execute_place_bid(
             BIDS.update(
                 deps.storage,
                 (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-                |bid| -> StdResult<_> {
+                |bid| -> StdResult<BidInfo> {
                     let mut updated_bid = bid.unwrap();
                     // Update history with sent compounded
                     history_sent = updated_bid.total_bid.checked_add(sent)?;
@@ -953,7 +957,7 @@ pub fn execute_place_bid(
             HISTORIES_BIDDER.update(
                 deps.storage,
                 (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-                |hist| -> StdResult<_> {
+                |hist| -> StdResult<HistoryInfo> {
                     let mut updated_hist = hist.unwrap();
                     updated_hist.bids.push(HistoryBidInfo {
                         bidder: sender_raw.clone(),
@@ -984,7 +988,7 @@ pub fn execute_place_bid(
             HISTORIES.update(
                 deps.storage,
                 &auction_id.to_be_bytes(),
-                |hist| -> StdResult<_> {
+                |hist| -> StdResult<HistoryInfo> {
                     let mut updated_hist = hist.unwrap();
                     updated_hist.bids.push(HistoryBidInfo {
                         bidder: sender_raw,
@@ -1016,6 +1020,10 @@ pub fn execute_instant_buy(
         None => Err(ContractError::Unauthorized {}),
         Some(item) => Ok(item),
     }?;
+    // Verify if auction is resolved
+    if item.resolved {
+        return Err(ContractError::Unauthorized {});
+    }
     if env.block.time.seconds() > item.end_time {
         return Err(ContractError::EndTimeExpired {});
     }
@@ -1072,7 +1080,7 @@ pub fn execute_instant_buy(
             BIDS.update(
                 deps.storage,
                 (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-                |bid| -> StdResult<_> {
+                |bid| -> StdResult<BidInfo> {
                     let mut updated_bid = bid.unwrap();
                     // Update history with sent compounded
                     history_sent = updated_bid.total_bid.checked_add(sent)?;
@@ -1085,19 +1093,11 @@ pub fn execute_instant_buy(
         }
     }
 
-    let bid_total_amount = BIDS.load(
-        deps.storage,
-        (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-    )?;
-
     let instant_buy_amount = match item.instant_buy {
         None => Err(ContractError::Unauthorized {}),
         Some(amount) => {
-            if amount != bid_total_amount.total_bid {
-                return Err(ContractError::InaccurateFunds(
-                    amount,
-                    bid_total_amount.total_bid,
-                ));
+            if amount != history_sent {
+                return Err(ContractError::InaccurateFunds(amount, history_sent));
             }
             Ok(amount)
         }
@@ -1106,8 +1106,8 @@ pub fn execute_instant_buy(
     ITEMS.update(
         deps.storage,
         &auction_id.to_be_bytes(),
-        |item| -> StdResult<_> {
-            let mut updated_item = item.unwrap();
+        |item_info| -> StdResult<ItemInfo> {
+            let mut updated_item = item_info.unwrap();
             updated_item.end_time = env.block.time.minus_seconds(MIN_TIME_AUCTION).seconds();
             updated_item.highest_bid = Some(instant_buy_amount);
             updated_item.highest_bidder = Some(sender_raw.clone());
@@ -1137,7 +1137,7 @@ pub fn execute_instant_buy(
             HISTORIES_BIDDER.update(
                 deps.storage,
                 (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-                |hist| -> StdResult<_> {
+                |hist| -> StdResult<HistoryInfo> {
                     let mut updated_hist = hist.unwrap();
                     updated_hist.bids.push(HistoryBidInfo {
                         bidder: sender_raw.clone(),
@@ -1168,7 +1168,7 @@ pub fn execute_instant_buy(
             HISTORIES.update(
                 deps.storage,
                 &auction_id.to_be_bytes(),
-                |hist| -> StdResult<_> {
+                |hist| -> StdResult<HistoryInfo> {
                     let mut updated_hist = hist.unwrap();
                     updated_hist.bids.push(HistoryBidInfo {
                         bidder: sender_raw,
@@ -1225,7 +1225,7 @@ pub fn execute_update_royalty(
             ROYALTY.update(
                 deps.storage,
                 &raw_sender.as_ref(),
-                |royalty| -> StdResult<_> {
+                |royalty| -> StdResult<RoyaltyInfo> {
                     let mut updated_royalty = royalty.unwrap();
 
                     if recipient.is_some() {
@@ -1261,9 +1261,15 @@ pub fn execute_cancel_auction(
         Some(auction) => auction,
     };
     // Verify if auction ended
-    if item.end_time < env.block.time.seconds() {
+    if env.block.time.seconds() > item.end_time {
         return Err(ContractError::EndTimeExpired {});
     }
+
+    // Verify if auction is resolved
+    if item.resolved {
+        return Err(ContractError::Unauthorized {});
+    }
+
     let raw_sender = deps.api.addr_canonicalize(info.sender.as_str())?;
     if raw_sender != item.creator {
         return Err(ContractError::Unauthorized {});
@@ -1339,7 +1345,7 @@ pub fn execute_cancel_auction(
     ITEMS.update(
         deps.storage,
         &auction_id.to_be_bytes(),
-        |item| -> StdResult<_> {
+        |item| -> StdResult<ItemInfo> {
             let mut updated_item = item.unwrap();
             updated_item.end_time = env.block.time.minus_seconds(MIN_TIME_AUCTION).seconds();
             //updated_item.highest_bid = None;
@@ -1632,21 +1638,24 @@ fn query_royalty(deps: Deps, _env: Env, address: String) -> StdResult<RoyaltyRes
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Response> {
-    let cancellation = Cancellation {
-        cancellation_fee: Decimal::from_str("0.1").unwrap(),
-    };
-    CANCELLATION.save(deps.storage, &cancellation)?;
-    // store.lota_contract = deps.api.addr_canonicalize(Addr::unchecked("terra1342fp86c3z3q0lksq92lncjxpkfl9hujwh6xfn").as_ref())?;
+    // let cancellation = Cancellation {
+    //     cancellation_fee: Decimal::from_str("0.1").unwrap(),
+    // };
+    // CANCELLATION.save(deps.storage, &cancellation)?;
+    // store.lota_contract = deps.api.addr_canonicalize(Addr::unchecked("terra1suetgdll2ra65hzdp3yfzafkq8zwdktht6aqdq").as_ref())?;
     // CONFIG.save(deps.storage, &store)?;
-    // ITEMS.update(
-    //     deps.storage,
-    //     &57_u64.to_be_bytes(),
-    //     |item| -> StdResult<_> {
-    //         let mut updated_item = item.unwrap();
-    //         updated_item.end_time = env.block.time.plus_seconds(MAX_TIME_AUCTION).seconds();
-    //         Ok(updated_item)
-    //     },
-    // )?;
+    let highest_bidder = deps.api.addr_canonicalize(
+        Addr::unchecked("terra1suetgdll2ra65hzdp3yfzafkq8zwdktht6aqdq").as_ref(),
+    )?;
+    ITEMS.update(
+        deps.storage,
+        &94_u64.to_be_bytes(),
+        |item| -> StdResult<ItemInfo> {
+            let mut updated_item = item.unwrap();
+            updated_item.highest_bidder = Some(highest_bidder);
+            Ok(updated_item)
+        },
+    )?;
     Ok(Response::default())
 }
 
