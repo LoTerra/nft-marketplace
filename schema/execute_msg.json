@@ -95,6 +95,29 @@
       "additionalProperties": false
     },
     {
+      "description": "Cancel auction",
+      "type": "object",
+      "required": [
+        "cancel_auction"
+      ],
+      "properties": {
+        "cancel_auction": {
+          "type": "object",
+          "required": [
+            "auction_id"
+          ],
+          "properties": {
+            "auction_id": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
       "description": "Creator update ROYALTY",
       "type": "object",
       "required": [

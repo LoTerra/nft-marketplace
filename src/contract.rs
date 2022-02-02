@@ -1,10 +1,11 @@
 use cosmwasm_std::{
-    entry_point, from_binary, to_binary, BankMsg, Binary, Coin, ContractResult, CosmosMsg, Decimal,
-    Deps, DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult, SubMsg,
+    entry_point, from_binary, to_binary, Addr, BankMsg, Binary, Coin, ContractResult, CosmosMsg,
+    Decimal, Deps, DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult, SubMsg,
     SubMsgExecutionResponse, Uint128, WasmMsg, WasmQuery,
 };
 use cw2::set_contract_version;
 use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
+use cw20_base::state::MinterData;
 use cw721::{Cw721ExecuteMsg, Cw721ReceiveMsg};
 use cw_storage_plus::Bound;
 use std::convert::TryInto;
@@ -14,12 +15,13 @@ use std::str::FromStr;
 use crate::error::ContractError;
 use crate::msg::{
     AllAuctionsResponse, AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg,
-    HistoryBidResponse, HistoryResponse, InstantiateMsg, MigrateMsg, QueryMsg, ReceiveMsg,
-    RoyaltyResponse, StateResponse,
+    HistoryBidResponse, HistoryResponse, InstantiateMsg, MigrateMsg, QueryMsg, QueryTalisMsg,
+    ReceiveMsg, RoyaltyResponse, StateResponse,
 };
 use crate::state::{
-    BidInfo, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, RoyaltyInfo, State, BIDS,
-    CONFIG, HISTORIES, HISTORIES_BIDDER, ITEMS, ROYALTY, STATE,
+    BidInfo, Cancellation, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, RoyaltyInfo,
+    State, TalisInfo, BIDS, CANCELLATION, CONFIG, HISTORIES, HISTORIES_BIDDER, ITEMS, ROYALTY,
+    STATE,
 };
 use crate::taxation::deduct_tax;
 
@@ -30,7 +32,7 @@ const MIN_TIME_AUCTION: u64 = 600; // 10 min
 const MAX_TIME_AUCTION: u64 = 15778800; // 6 months max
 const LAST_MINUTE_BID_EXTRA_TIME: u64 = 600; // 10 min
 const ROYALTY_MAX_FEE: &str = "0.10"; // 10% or 10/100
-const DEFAULT_ROYALTY_FEE: &str = "0.01"; // 1% or 1/100
+const DEFAULT_ROYALTY_FEE: &str = "0"; // 1% or 1/100
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -59,6 +61,11 @@ pub fn instantiate(
         cw20_address: deps.api.addr_canonicalize(&env.contract.address.as_str())?,
     };
     STATE.save(deps.storage, &state)?;
+
+    let cancellation = Cancellation {
+        cancellation_fee: Default::default(),
+    };
+    CANCELLATION.save(deps.storage, &cancellation)?;
     /*
        Instantiate a cw20, privilege using this cw20 like private sale...
     */
@@ -106,6 +113,9 @@ pub fn execute(
         }
         ExecuteMsg::ReceiveNft(msg) => execute_receive_cw721(deps, env, info, msg),
         ExecuteMsg::Receive(msg) => execute_receive_cw20(deps, env, info, msg),
+        ExecuteMsg::CancelAuction { auction_id } => {
+            execute_cancel_auction(deps, env, info, auction_id)
+        }
     }
 }
 
@@ -437,17 +447,6 @@ pub fn execute_retract_bids(
         return Err(ContractError::Unauthorized {});
     }
 
-    BIDS.update(
-        deps.storage,
-        (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-        |bid| -> StdResult<_> {
-            let mut update_bid = bid.unwrap();
-            update_bid.total_bid = Uint128::zero();
-            update_bid.resolved = true;
-            Ok(update_bid)
-        },
-    )?;
-
     let bank_msg = CosmosMsg::Bank(BankMsg::Send {
         to_address: info.sender.to_string(),
         amount: vec![deduct_tax(
@@ -474,6 +473,17 @@ pub fn execute_retract_bids(
         msgs.push(execute_privilege_msg);
     }
 
+    BIDS.update(
+        deps.storage,
+        (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
+        |bid| -> StdResult<BidInfo> {
+            let mut update_bid = bid.unwrap();
+            update_bid.total_bid = Uint128::zero();
+            update_bid.resolved = true;
+            Ok(update_bid)
+        },
+    )?;
+
     let res = Response::new()
         .add_messages(msgs)
         .add_attribute("auction_id", auction_id.to_string())
@@ -499,21 +509,81 @@ pub fn execute_withdraw_nft(
         contract_addr: contract_address.to_string(),
         msg: to_binary(&minter_msg)?,
     };
-    let res: cw20_base::state::MinterData = deps.querier.query(&wasm.into())?;
-
-    let minter = deps.api.addr_canonicalize(&res.minter.to_string())?;
-    let royalty = ROYALTY
-        .load(deps.storage, &minter.as_slice())
-        .unwrap_or(RoyaltyInfo {
-            creator: minter.clone(),
-            fee: Decimal::from_str(DEFAULT_ROYALTY_FEE).unwrap(),
-            recipient: None,
+    let res: cw20_base::state::MinterData =
+        deps.querier.query(&wasm.into()).unwrap_or(MinterData {
+            minter: Addr::unchecked("talis"),
+            cap: None,
         });
-    // Set the recipient
-    let raw_royalty_recipient = if let Some(recipient) = royalty.recipient {
-        recipient
+
+    // let minter = if res.unwrap_err() {
+    //     let minter_msg = QueryTalisMsg::MintingInfo {};
+    //     let wasm = WasmQuery::Smart {
+    //         contract_addr: contract_address.to_string(),
+    //         msg: to_binary(&minter_msg)?,
+    //     };
+    //
+    //     let res: TalisInfo = deps.querier.query(&wasm.into()).unwrap_or(TalisInfo {
+    //         minter: Some("undefined".to_string()),
+    //         max_supply: None,
+    //     });
+    //
+    //     if let Some(minter) = res.minter.clone() {
+    //         if minter == "undefined" {
+    //             None
+    //         } else {
+    //             Some(deps.api.addr_canonicalize(&res.minter.unwrap())?)
+    //         }
+    //     } else {
+    //         None
+    //     }
+    // }else {
+    //
+    //     //Some(deps.api.addr_canonicalize(&res.minter.to_string())?)
+    // };
+
+    let minter = if res.minter == "talis" {
+        let minter_msg = QueryTalisMsg::MintingInfo {};
+        let wasm = WasmQuery::Smart {
+            contract_addr: contract_address.to_string(),
+            msg: to_binary(&minter_msg)?,
+        };
+
+        let res: TalisInfo = deps.querier.query(&wasm.into()).unwrap_or(TalisInfo {
+            minter: Some("undefined".to_string()),
+            max_supply: None,
+        });
+
+        if let Some(minter) = res.minter.clone() {
+            if minter == "undefined" {
+                None
+            } else {
+                Some(deps.api.addr_canonicalize(&res.minter.unwrap())?)
+            }
+        } else {
+            None
+        }
     } else {
-        minter
+        Some(deps.api.addr_canonicalize(&res.minter.to_string())?)
+    };
+
+    // Set the recipient
+    let royalty = if let Some(minter) = minter {
+        let royalty_info = ROYALTY
+            .load(deps.storage, &minter.as_slice())
+            .unwrap_or(RoyaltyInfo {
+                creator: minter.clone(),
+                fee: Decimal::from_str(DEFAULT_ROYALTY_FEE).unwrap(),
+                recipient: None,
+            });
+
+        let raw_royalty_recipient = if let Some(recipient) = royalty_info.clone().recipient {
+            recipient
+        } else {
+            minter
+        };
+        Some((raw_royalty_recipient, royalty_info))
+    } else {
+        None
     };
 
     if item.resolved {
@@ -551,9 +621,10 @@ pub fn execute_withdraw_nft(
         highest_bid_amount = highest_bid;
         net_amount_after = highest_bid;
 
-        // Apply Royalty fee
-        royalty_fee_amount = net_amount_after.mul(royalty.fee);
-        net_amount_after = net_amount_after.checked_sub(royalty_fee_amount).unwrap();
+        if let Some(royalty) = royalty.clone() {
+            // Apply Royalty fee
+            royalty_fee_amount = net_amount_after.mul(royalty.1.fee);
+        }
 
         // Apply fee if it is not a private sale or lower fee if it is a private sale
         if !item.private_sale {
@@ -562,6 +633,7 @@ pub fn execute_withdraw_nft(
             lota_fee_amount = net_amount_after.mul(config.lota_fee_low);
         }
         net_amount_after = net_amount_after.checked_sub(lota_fee_amount).unwrap();
+        net_amount_after = net_amount_after.checked_sub(royalty_fee_amount).unwrap();
 
         if let Some(charity) = item.charity {
             charity_amount = net_amount_after.mul(charity.fee_percentage);
@@ -573,7 +645,7 @@ pub fn execute_withdraw_nft(
     ITEMS.update(
         deps.storage,
         &auction_id.to_be_bytes(),
-        |item| -> StdResult<_> {
+        |item| -> StdResult<ItemInfo> {
             let mut update_item = item.unwrap();
             update_item.resolved = true;
             Ok(update_item)
@@ -646,16 +718,18 @@ pub fn execute_withdraw_nft(
            Prepare msg send Royalty to minter
         */
         if !royalty_fee_amount.is_zero() {
-            msgs.push(CosmosMsg::Bank(BankMsg::Send {
-                to_address: deps.api.addr_humanize(&raw_royalty_recipient)?.to_string(),
-                amount: vec![deduct_tax(
-                    &deps.querier,
-                    Coin {
-                        denom: config.denom.clone(),
-                        amount: royalty_fee_amount,
-                    },
-                )?],
-            }));
+            if let Some(royalty) = royalty {
+                msgs.push(CosmosMsg::Bank(BankMsg::Send {
+                    to_address: deps.api.addr_humanize(&royalty.0)?.to_string(),
+                    amount: vec![deduct_tax(
+                        &deps.querier,
+                        Coin {
+                            denom: config.denom.clone(),
+                            amount: royalty_fee_amount,
+                        },
+                    )?],
+                }));
+            }
         }
 
         /*
@@ -727,6 +801,10 @@ pub fn execute_place_bid(
 
     let item = ITEMS.load(deps.storage, &auction_id.to_be_bytes())?;
 
+    // Verify if auction is resolved
+    if item.resolved {
+        return Err(ContractError::Unauthorized {});
+    }
     // Verify if auction ended
     if item.end_time < env.block.time.seconds() {
         return Err(ContractError::EndTimeExpired {});
@@ -791,7 +869,7 @@ pub fn execute_place_bid(
     ITEMS.update(
         deps.storage,
         &auction_id.to_be_bytes(),
-        |item| -> StdResult<_> {
+        |item| -> StdResult<ItemInfo> {
             let mut updated_item = item.unwrap();
             // Cannot bid more than the instant buy price
             match updated_item.instant_buy {
@@ -846,7 +924,7 @@ pub fn execute_place_bid(
             BIDS.update(
                 deps.storage,
                 (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-                |bid| -> StdResult<_> {
+                |bid| -> StdResult<BidInfo> {
                     let mut updated_bid = bid.unwrap();
                     // Update history with sent compounded
                     history_sent = updated_bid.total_bid.checked_add(sent)?;
@@ -879,7 +957,7 @@ pub fn execute_place_bid(
             HISTORIES_BIDDER.update(
                 deps.storage,
                 (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-                |hist| -> StdResult<_> {
+                |hist| -> StdResult<HistoryInfo> {
                     let mut updated_hist = hist.unwrap();
                     updated_hist.bids.push(HistoryBidInfo {
                         bidder: sender_raw.clone(),
@@ -910,7 +988,7 @@ pub fn execute_place_bid(
             HISTORIES.update(
                 deps.storage,
                 &auction_id.to_be_bytes(),
-                |hist| -> StdResult<_> {
+                |hist| -> StdResult<HistoryInfo> {
                     let mut updated_hist = hist.unwrap();
                     updated_hist.bids.push(HistoryBidInfo {
                         bidder: sender_raw,
@@ -942,6 +1020,10 @@ pub fn execute_instant_buy(
         None => Err(ContractError::Unauthorized {}),
         Some(item) => Ok(item),
     }?;
+    // Verify if auction is resolved
+    if item.resolved {
+        return Err(ContractError::Unauthorized {});
+    }
     if env.block.time.seconds() > item.end_time {
         return Err(ContractError::EndTimeExpired {});
     }
@@ -998,7 +1080,7 @@ pub fn execute_instant_buy(
             BIDS.update(
                 deps.storage,
                 (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-                |bid| -> StdResult<_> {
+                |bid| -> StdResult<BidInfo> {
                     let mut updated_bid = bid.unwrap();
                     // Update history with sent compounded
                     history_sent = updated_bid.total_bid.checked_add(sent)?;
@@ -1011,19 +1093,11 @@ pub fn execute_instant_buy(
         }
     }
 
-    let bid_total_amount = BIDS.load(
-        deps.storage,
-        (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-    )?;
-
     let instant_buy_amount = match item.instant_buy {
         None => Err(ContractError::Unauthorized {}),
         Some(amount) => {
-            if amount != bid_total_amount.total_bid {
-                return Err(ContractError::InaccurateFunds(
-                    amount,
-                    bid_total_amount.total_bid,
-                ));
+            if amount != history_sent {
+                return Err(ContractError::InaccurateFunds(amount, history_sent));
             }
             Ok(amount)
         }
@@ -1032,8 +1106,8 @@ pub fn execute_instant_buy(
     ITEMS.update(
         deps.storage,
         &auction_id.to_be_bytes(),
-        |item| -> StdResult<_> {
-            let mut updated_item = item.unwrap();
+        |item_info| -> StdResult<ItemInfo> {
+            let mut updated_item = item_info.unwrap();
             updated_item.end_time = env.block.time.minus_seconds(MIN_TIME_AUCTION).seconds();
             updated_item.highest_bid = Some(instant_buy_amount);
             updated_item.highest_bidder = Some(sender_raw.clone());
@@ -1063,7 +1137,7 @@ pub fn execute_instant_buy(
             HISTORIES_BIDDER.update(
                 deps.storage,
                 (&auction_id.to_be_bytes(), &sender_raw.as_slice()),
-                |hist| -> StdResult<_> {
+                |hist| -> StdResult<HistoryInfo> {
                     let mut updated_hist = hist.unwrap();
                     updated_hist.bids.push(HistoryBidInfo {
                         bidder: sender_raw.clone(),
@@ -1094,7 +1168,7 @@ pub fn execute_instant_buy(
             HISTORIES.update(
                 deps.storage,
                 &auction_id.to_be_bytes(),
-                |hist| -> StdResult<_> {
+                |hist| -> StdResult<HistoryInfo> {
                     let mut updated_hist = hist.unwrap();
                     updated_hist.bids.push(HistoryBidInfo {
                         bidder: sender_raw,
@@ -1151,7 +1225,7 @@ pub fn execute_update_royalty(
             ROYALTY.update(
                 deps.storage,
                 &raw_sender.as_ref(),
-                |royalty| -> StdResult<_> {
+                |royalty| -> StdResult<RoyaltyInfo> {
                     let mut updated_royalty = royalty.unwrap();
 
                     if recipient.is_some() {
@@ -1170,6 +1244,122 @@ pub fn execute_update_royalty(
         .add_attribute("update_royalty", info.sender.to_string())
         .add_attribute("royalty_fee", fee.to_string())
         .add_attribute("recipient", recipient.to_string());
+    Ok(res)
+}
+
+pub fn execute_cancel_auction(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    auction_id: u64,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    let cancellation = CANCELLATION.load(deps.storage)?;
+
+    let item = match ITEMS.may_load(deps.storage, &auction_id.to_be_bytes())? {
+        None => return Err(ContractError::Unauthorized {}),
+        Some(auction) => auction,
+    };
+    // Verify if auction ended
+    if env.block.time.seconds() > item.end_time {
+        return Err(ContractError::EndTimeExpired {});
+    }
+
+    // Verify if auction is resolved
+    if item.resolved {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let raw_sender = deps.api.addr_canonicalize(info.sender.as_str())?;
+    if raw_sender != item.creator {
+        return Err(ContractError::Unauthorized {});
+    }
+    let mut msgs = vec![];
+    // Check if this auction need fees
+    let fee_indicator = if let Some(highest_bid) = item.highest_bid {
+        let sent = match info.funds.len() {
+            0 => Err(ContractError::EmptyFunds {}),
+            1 => {
+                if info.funds[0].denom != config.denom {
+                    return Err(ContractError::WrongDenom {});
+                }
+                Ok(info.funds[0].amount)
+            }
+            _ => Err(ContractError::MultipleDenoms {}),
+        }?;
+
+        let cancellation_fee = highest_bid.mul(cancellation.cancellation_fee);
+
+        if sent != cancellation_fee {
+            return Err(ContractError::CancelAuctionFee(
+                cancellation_fee.to_string(),
+                config.denom,
+            ));
+        }
+
+        // Fee for highest bidder
+        if let Some(highest_bidder) = item.highest_bidder {
+            // send split amount
+            let split_amount = Decimal::from_str("0.5").unwrap();
+            // prepare message for highest bidder
+            msgs.push(CosmosMsg::Bank(BankMsg::Send {
+                to_address: deps.api.addr_humanize(&highest_bidder)?.to_string(),
+                amount: vec![deduct_tax(
+                    &deps.querier,
+                    Coin {
+                        denom: config.denom.clone(),
+                        amount: cancellation_fee.mul(split_amount),
+                    },
+                )?],
+            }));
+            // prepare message for fee recipient
+            msgs.push(CosmosMsg::Bank(BankMsg::Send {
+                to_address: deps.api.addr_humanize(&config.lota_contract)?.to_string(),
+                amount: vec![deduct_tax(
+                    &deps.querier,
+                    Coin {
+                        denom: config.denom.clone(),
+                        amount: cancellation_fee.mul(split_amount),
+                    },
+                )?],
+            }));
+        } else {
+            // Send the full amount
+            msgs.push(CosmosMsg::Bank(BankMsg::Send {
+                to_address: deps.api.addr_humanize(&config.lota_contract)?.to_string(),
+                amount: vec![deduct_tax(
+                    &deps.querier,
+                    Coin {
+                        denom: config.denom.clone(),
+                        amount: cancellation_fee,
+                    },
+                )?],
+            }));
+        }
+        // Return cancellation_fee
+        cancellation_fee
+    } else {
+        Uint128::zero()
+    };
+
+    ITEMS.update(
+        deps.storage,
+        &auction_id.to_be_bytes(),
+        |item| -> StdResult<ItemInfo> {
+            let mut updated_item = item.unwrap();
+            updated_item.end_time = env.block.time.minus_seconds(MIN_TIME_AUCTION).seconds();
+            //updated_item.highest_bid = None;
+            updated_item.highest_bidder = None;
+
+            Ok(updated_item)
+        },
+    )?;
+
+    let res = Response::new()
+        .add_messages(msgs)
+        .add_attribute("action", "cancel_auction".to_string())
+        .add_attribute("auction_id", auction_id.to_string())
+        .add_attribute("cancellation_fee", fee_indicator.to_string());
     Ok(res)
 }
 
@@ -1344,15 +1534,18 @@ fn query_bidder_bids(
 
 fn query_config(deps: Deps, _env: Env) -> StdResult<ConfigResponse> {
     let config = CONFIG.load(deps.storage)?;
+    let cancellation = CANCELLATION.load(deps.storage)?;
     Ok(ConfigResponse {
         denom: config.denom,
         bid_margin: config.bid_margin,
         lota_fee: config.lota_fee,
+        lota_fee_low: config.lota_fee_low,
         lota_contract: deps.api.addr_humanize(&config.lota_contract)?.to_string(),
         sity_full_rewards: config.sity_full_rewards,
         sity_partial_rewards: config.sity_partial_rewards,
         sity_fee_registration: config.sity_fee_registration,
         sity_min_opening: config.sity_min_opening,
+        cancellation_fee: cancellation.cancellation_fee,
     })
 }
 
@@ -1445,20 +1638,24 @@ fn query_royalty(deps: Deps, _env: Env, address: String) -> StdResult<RoyaltyRes
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Response> {
-    let mut store = CONFIG.load(deps.storage)?;
-    store.lota_fee_low = Decimal::from_str("0.0150").unwrap();
-    CONFIG.save(deps.storage, &store)?;
-    // store.lota_contract = deps.api.addr_canonicalize(Addr::unchecked("terra1342fp86c3z3q0lksq92lncjxpkfl9hujwh6xfn").as_ref())?;
+    // let cancellation = Cancellation {
+    //     cancellation_fee: Decimal::from_str("0.1").unwrap(),
+    // };
+    // CANCELLATION.save(deps.storage, &cancellation)?;
+    // store.lota_contract = deps.api.addr_canonicalize(Addr::unchecked("terra1suetgdll2ra65hzdp3yfzafkq8zwdktht6aqdq").as_ref())?;
     // CONFIG.save(deps.storage, &store)?;
-    // ITEMS.update(
-    //     deps.storage,
-    //     &57_u64.to_be_bytes(),
-    //     |item| -> StdResult<_> {
-    //         let mut updated_item = item.unwrap();
-    //         updated_item.end_time = env.block.time.plus_seconds(MAX_TIME_AUCTION).seconds();
-    //         Ok(updated_item)
-    //     },
-    // )?;
+    let highest_bidder = deps.api.addr_canonicalize(
+        Addr::unchecked("terra1suetgdll2ra65hzdp3yfzafkq8zwdktht6aqdq").as_ref(),
+    )?;
+    ITEMS.update(
+        deps.storage,
+        &94_u64.to_be_bytes(),
+        |item| -> StdResult<ItemInfo> {
+            let mut updated_item = item.unwrap();
+            updated_item.highest_bidder = Some(highest_bidder);
+            Ok(updated_item)
+        },
+    )?;
     Ok(Response::default())
 }
 
@@ -2713,6 +2910,18 @@ mod tests {
             execute_msg,
         )
         .unwrap();
+        // Update Royalty
+        let royalty_msg = ExecuteMsg::UpdateRoyalty {
+            fee: Decimal::from_str("0.1").unwrap(),
+            recipient: None,
+        };
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("terrans", &vec![]),
+            royalty_msg,
+        )
+        .unwrap();
         /*
            Place bid
         */
@@ -2777,21 +2986,21 @@ mod tests {
             to_address: "sender".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(93_118_811u128),
+                amount: Uint128::from(84_158_415u128),
             }],
         });
         let message_five = CosmosMsg::Bank(BankMsg::Send {
             to_address: "terrans".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(990_099u128),
+                amount: Uint128::from(9_900_990u128),
             }],
         });
         let message_six = CosmosMsg::Bank(BankMsg::Send {
             to_address: "loterra".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(4_900_990u128),
+                amount: Uint128::from(4_950_495u128),
             }],
         });
 
@@ -3050,21 +3259,21 @@ mod tests {
             to_address: "sender".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(1_642_820_750u128),
+                amount: Uint128::from(1_490_425_000u128),
             }],
         });
         let message_five = CosmosMsg::Bank(BankMsg::Send {
             to_address: "terrans".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(16_732_673u128),
+                amount: Uint128::from(1_68_000_000u128),
             }],
         });
         let message_six = CosmosMsg::Bank(BankMsg::Send {
             to_address: "loterra".to_string(),
             amount: vec![Coin {
                 denom: "uusd".to_string(),
-                amount: Uint128::from(28_989_356u128),
+                amount: Uint128::from(29_282_178u128),
             }],
         });
 
@@ -3244,7 +3453,7 @@ mod tests {
     #[test]
     fn instant_buy() {
         /*
-           Withdraw nft creator no bidders
+           Instant buy creator no bidders
         */
         let mut deps = mock_dependencies_custom(&coins(2, "token"));
         init_default(deps.as_mut());
@@ -3492,4 +3701,300 @@ mod tests {
     //         .unwrap_err();
     //     println!("{:?}", res);
     // }
+
+    #[test]
+    fn cancel_auction() {
+        let mut deps = mock_dependencies_custom(&coins(2, "token"));
+        init_default(deps.as_mut());
+        let mut config = CONFIG.load(deps.as_ref().storage).unwrap();
+        let mut cancellation = CANCELLATION.load(deps.as_ref().storage).unwrap();
+        cancellation.cancellation_fee = Decimal::from_str("0.1").unwrap();
+        CANCELLATION.save(deps.as_mut().storage, &cancellation);
+
+        // Create auction with end_time inferior current time
+        let env = mock_env();
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        let execute_msg = ExecuteMsg::CancelAuction { auction_id: 0 };
+
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("not_sender", &vec![]),
+            execute_msg.clone(),
+        )
+        .unwrap_err();
+
+        let execute_msg = ExecuteMsg::CancelAuction { auction_id: 0 };
+
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("sender", &vec![]),
+            execute_msg.clone(),
+        )
+        .unwrap();
+        //println!("{:?}", res);
+        assert_eq!(res.messages.len(), 0);
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "action".to_string(),
+                    value: "cancel_auction".to_string()
+                },
+                Attribute {
+                    key: "auction_id".to_string(),
+                    value: "0".to_string()
+                },
+                Attribute {
+                    key: "cancellation_fee".to_string(),
+                    value: "0".to_string()
+                },
+            ]
+        );
+        // Handle cancelling multiple times
+        let err = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("sender", &vec![]),
+            execute_msg,
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::EndTimeExpired {});
+
+        // Withdraw the NFT
+        let execute_msg = ExecuteMsg::WithdrawNft { auction_id: 0 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("sender", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        let cw721_msg = cw721::Cw721ExecuteMsg::TransferNft {
+            recipient: "sender".to_string(),
+            token_id: "test".to_string(),
+        };
+        let cosmwasm_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: "market".to_string(),
+            msg: to_binary(&cw721_msg).unwrap(),
+            funds: vec![],
+        });
+        assert_eq!(res.messages, vec![SubMsg::new(cosmwasm_msg)]);
+
+        let execute_msg = create_msg_nft(
+            None,
+            None,
+            env.block.time.plus_seconds(1000).seconds(),
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("market", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+
+        let execute_msg = ExecuteMsg::PlaceBid { auction_id: 1 };
+        let bid_amount = Uint128::from(100_000_000u128);
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "alice",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: bid_amount,
+                }],
+            ),
+            execute_msg,
+        )
+        .unwrap();
+
+        let execute_msg = ExecuteMsg::CancelAuction { auction_id: 1 };
+        let err = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "sender",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: Uint128::from(1_000_000u128),
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap_err();
+        let cancellation_fee = bid_amount.mul(cancellation.cancellation_fee);
+        assert_eq!(
+            err,
+            ContractError::CancelAuctionFee(cancellation_fee.to_string(), "uusd".to_string())
+        );
+
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info(
+                "sender",
+                &vec![Coin {
+                    denom: "uusd".to_string(),
+                    amount: cancellation_fee,
+                }],
+            ),
+            execute_msg.clone(),
+        )
+        .unwrap();
+        // Split the amount between the highest bidder and fee contract collector here LoTerra staking contract
+        let bank_msg_one = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "alice".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(4_950_495u128),
+            }],
+        });
+        let bank_msg_two = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "loterra".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(4_950_495u128),
+            }],
+        });
+
+        assert_eq!(res.messages.len(), 2);
+        assert_eq!(
+            res.messages,
+            vec![SubMsg::new(bank_msg_one), SubMsg::new(bank_msg_two)]
+        );
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "action".to_string(),
+                    value: "cancel_auction".to_string()
+                },
+                Attribute {
+                    key: "auction_id".to_string(),
+                    value: "1".to_string()
+                },
+                Attribute {
+                    key: "cancellation_fee".to_string(),
+                    value: cancellation_fee.to_string()
+                },
+            ]
+        );
+        // ALICE retract bid success since auction was cancelled
+        let execute_msg = ExecuteMsg::RetractBids { auction_id: 1 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("alice", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        let bank_msg = CosmosMsg::Bank(BankMsg::Send {
+            to_address: "alice".to_string(),
+            amount: vec![Coin {
+                denom: "uusd".to_string(),
+                amount: Uint128::from(99_009_900u128),
+            }],
+        });
+        let mint_sity_msg = cw20::Cw20ExecuteMsg::Mint {
+            recipient: "alice".to_string(),
+            amount: Uint128::from(1_000_000u128),
+        };
+        let wasm_msg = WasmMsg::Execute {
+            contract_addr: "cosmos2contract".to_string(),
+            msg: to_binary(&mint_sity_msg).unwrap(),
+            funds: vec![],
+        };
+        assert_eq!(res.messages.len(), 2);
+        assert_eq!(
+            res.messages,
+            vec![SubMsg::new(bank_msg), SubMsg::new(wasm_msg)]
+        );
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "auction_id".to_string(),
+                    value: "1".to_string()
+                },
+                Attribute {
+                    key: "refund_amount".to_string(),
+                    value: "100000000".to_string()
+                },
+                Attribute {
+                    key: "recipient".to_string(),
+                    value: "alice".to_string()
+                }
+            ]
+        );
+        // Withdraw the NFT sender get back his NFT
+        let execute_msg = ExecuteMsg::WithdrawNft { auction_id: 1 };
+        let res = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("sender", &vec![]),
+            execute_msg,
+        )
+        .unwrap();
+        assert_eq!(res.messages.len(), 1);
+        let cw721_msg = cw721::Cw721ExecuteMsg::TransferNft {
+            recipient: "sender".to_string(),
+            token_id: "test".to_string(),
+        };
+        let cosmwasm_msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: "market".to_string(),
+            msg: to_binary(&cw721_msg).unwrap(),
+            funds: vec![],
+        });
+        assert_eq!(res.messages, vec![SubMsg::new(cosmwasm_msg)]);
+        assert_eq!(
+            res.attributes,
+            vec![
+                Attribute {
+                    key: "auction_type".to_string(),
+                    value: "NFT".to_string()
+                },
+                Attribute {
+                    key: "auction_id".to_string(),
+                    value: "1".to_string()
+                },
+                Attribute {
+                    key: "sender".to_string(),
+                    value: "sender".to_string()
+                },
+                Attribute {
+                    key: "creator".to_string(),
+                    value: "sender".to_string()
+                },
+                Attribute {
+                    key: "recipient".to_string(),
+                    value: "sender".to_string()
+                },
+            ]
+        );
+        println!("{:?}", res);
+    }
 }

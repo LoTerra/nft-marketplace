@@ -53,6 +53,9 @@ pub enum ContractError {
 
     #[error("Max Royalty for creator is 10%")]
     MaxRoyaltyReached {},
+
+    #[error("You need to pay fees for canceling this auction please send {0} {1}")]
+    CancelAuctionFee(String, String),
     // Add any other custom errors you like here.
     // Look at https://docs.rs/thiserror/1.0.21/thiserror/ for details.
 }

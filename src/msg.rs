@@ -30,6 +30,8 @@ pub enum ExecuteMsg {
     WithdrawNft { auction_id: u64 },
     /// Instant buy if allowed on the sale
     InstantBuy { auction_id: u64 },
+    /// Cancel auction
+    CancelAuction { auction_id: u64 },
     /// Creator update ROYALTY
     UpdateRoyalty {
         fee: Decimal,
@@ -94,6 +96,13 @@ pub enum QueryMsg {
     },
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryTalisMsg {
+    /// Get minter on Talis
+    MintingInfo {},
+}
+
 // We define a custom struct for each query response
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct AuctionResponse {
@@ -131,11 +140,13 @@ pub struct ConfigResponse {
     pub denom: String,
     pub bid_margin: Decimal,
     pub lota_fee: Decimal,
+    pub lota_fee_low: Decimal,
     pub lota_contract: String,
     pub sity_full_rewards: Decimal,
     pub sity_partial_rewards: Decimal,
     pub sity_fee_registration: Decimal,
     pub sity_min_opening: Uint128,
+    pub cancellation_fee: Decimal,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]

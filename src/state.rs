@@ -27,6 +27,13 @@ pub struct State {
 pub const STATE: Item<State> = Item::new("state");
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct Cancellation {
+    pub cancellation_fee: Decimal,
+}
+
+pub const CANCELLATION: Item<Cancellation> = Item::new("cancellation");
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct CharityInfo {
     pub address: CanonicalAddr,
     pub fee_percentage: Decimal,
@@ -102,6 +109,12 @@ pub struct RoyaltyInfo {
     pub recipient: Option<CanonicalAddr>,
 }
 pub const ROYALTY: Map<&[u8], RoyaltyInfo> = Map::new("royalty");
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct TalisInfo {
+    pub minter: Option<String>,
+    pub max_supply: Option<u64>,
+}
 
 /*
   User bid stats
