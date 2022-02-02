@@ -801,10 +801,6 @@ pub fn execute_place_bid(
 
     let item = ITEMS.load(deps.storage, &auction_id.to_be_bytes())?;
 
-    // Verify if auction is resolved
-    if item.resolved {
-        return Err(ContractError::Unauthorized {});
-    }
     // Verify if auction ended
     if item.end_time < env.block.time.seconds() {
         return Err(ContractError::EndTimeExpired {});
@@ -1020,10 +1016,7 @@ pub fn execute_instant_buy(
         None => Err(ContractError::Unauthorized {}),
         Some(item) => Ok(item),
     }?;
-    // Verify if auction is resolved
-    if item.resolved {
-        return Err(ContractError::Unauthorized {});
-    }
+
     if env.block.time.seconds() > item.end_time {
         return Err(ContractError::EndTimeExpired {});
     }
@@ -1263,11 +1256,6 @@ pub fn execute_cancel_auction(
     // Verify if auction ended
     if env.block.time.seconds() > item.end_time {
         return Err(ContractError::EndTimeExpired {});
-    }
-
-    // Verify if auction is resolved
-    if item.resolved {
-        return Err(ContractError::Unauthorized {});
     }
 
     let raw_sender = deps.api.addr_canonicalize(info.sender.as_str())?;
@@ -1637,25 +1625,25 @@ fn query_royalty(deps: Deps, _env: Env, address: String) -> StdResult<RoyaltyRes
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Response> {
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Response> {
     // let cancellation = Cancellation {
     //     cancellation_fee: Decimal::from_str("0.1").unwrap(),
     // };
     // CANCELLATION.save(deps.storage, &cancellation)?;
     // store.lota_contract = deps.api.addr_canonicalize(Addr::unchecked("terra1suetgdll2ra65hzdp3yfzafkq8zwdktht6aqdq").as_ref())?;
     // CONFIG.save(deps.storage, &store)?;
-    let highest_bidder = deps.api.addr_canonicalize(
-        Addr::unchecked("terra1suetgdll2ra65hzdp3yfzafkq8zwdktht6aqdq").as_ref(),
-    )?;
-    ITEMS.update(
-        deps.storage,
-        &94_u64.to_be_bytes(),
-        |item| -> StdResult<ItemInfo> {
-            let mut updated_item = item.unwrap();
-            updated_item.highest_bidder = Some(highest_bidder);
-            Ok(updated_item)
-        },
-    )?;
+    // let highest_bidder = deps.api.addr_canonicalize(
+    //     Addr::unchecked("terra1suetgdll2ra65hzdp3yfzafkq8zwdktht6aqdq").as_ref(),
+    // )?;
+    // ITEMS.update(
+    //     deps.storage,
+    //     &94_u64.to_be_bytes(),
+    //     |item| -> StdResult<ItemInfo> {
+    //         let mut updated_item = item.unwrap();
+    //         updated_item.highest_bidder = Some(highest_bidder);
+    //         Ok(updated_item)
+    //     },
+    // )?;
     Ok(Response::default())
 }
 
