@@ -14,14 +14,14 @@ use std::str::FromStr;
 
 use crate::error::ContractError;
 use crate::msg::{
-    AllAuctionsResponse, AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg,
-    HistoryBidResponse, HistoryResponse, InstantiateMsg, MigrateMsg, QueryMsg, QueryTalisMsg,
-    ReceiveMsg, RoyaltyResponse, StateResponse,
+    AllAuctionsResponse, AuctionResponse, BidResponse, CharityResponse, CollectionStatsResponse,
+    ConfigResponse, ExecuteMsg, HistoryBidResponse, HistoryResponse, InstantiateMsg, MigrateMsg,
+    QueryMsg, QueryTalisMsg, ReceiveMsg, RoyaltyResponse, StateResponse,
 };
 use crate::state::{
-    BidInfo, Cancellation, CharityInfo, Config, HistoryBidInfo, HistoryInfo, ItemInfo, RoyaltyInfo,
-    State, TalisInfo, BIDS, CANCELLATION, CONFIG, HISTORIES, HISTORIES_BIDDER, ITEMS, ROYALTY,
-    STATE,
+    BidInfo, Cancellation, CharityInfo, CollectionStatsInfo, Config, HistoryBidInfo, HistoryInfo,
+    ItemInfo, RoyaltyInfo, State, TalisInfo, BIDS, CANCELLATION, COLLECTION_STATS, CONFIG,
+    HISTORIES, HISTORIES_BIDDER, ITEMS, ROYALTY, STATE,
 };
 use crate::taxation::deduct_tax;
 
@@ -696,6 +696,45 @@ pub fn execute_withdraw_nft(
                 })?,
                 funds: vec![],
             }));
+
+            // Save stats of the NFT
+            match COLLECTION_STATS.may_load(deps.storage, &item.creator.as_slice())? {
+                None => COLLECTION_STATS.save(
+                    deps.storage,
+                    &item.creator.as_slice(),
+                    &CollectionStatsInfo {
+                        all_time_sold: 1,
+                        all_time_high: highest_bid_amount,
+                        all_time_low: highest_bid_amount,
+                        all_time_volume: highest_bid_amount,
+                        floor_price: highest_bid_amount,
+                    },
+                )?,
+                Some(_) => {
+                    COLLECTION_STATS.update(
+                        deps.storage,
+                        &item.creator.as_slice(),
+                        |nft_stats| -> Result<CollectionStatsInfo, ContractError> {
+                            let mut update_nft_stats = nft_stats.unwrap();
+                            if highest_bid_amount > update_nft_stats.all_time_high {
+                                update_nft_stats.all_time_high = highest_bid_amount;
+                            }
+                            if highest_bid_amount < update_nft_stats.all_time_low {
+                                update_nft_stats.all_time_low = highest_bid_amount;
+                            }
+                            update_nft_stats.all_time_sold += 1;
+                            update_nft_stats.all_time_volume =
+                                update_nft_stats.all_time_volume.add(highest_bid_amount);
+                            update_nft_stats.floor_price = Uint128::from(1u128).multiply_ratio(
+                                update_nft_stats.all_time_volume.u128(),
+                                update_nft_stats.all_time_sold as u128,
+                            );
+
+                            Ok(update_nft_stats)
+                        },
+                    )?;
+                }
+            }
         }
 
         if !net_amount_after.is_zero() {
@@ -1409,6 +1448,9 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             to_binary(&query_all_auctions(deps, start_after, limit)?)
         }
         QueryMsg::Royalty { address } => to_binary(&query_royalty(deps, env, address)?),
+        QueryMsg::CollectionStats { nft_contract } => {
+            to_binary(&query_collection_stats(deps, env, nft_contract)?)
+        }
     }
 }
 
@@ -1624,8 +1666,38 @@ fn query_royalty(deps: Deps, _env: Env, address: String) -> StdResult<RoyaltyRes
     })
 }
 
+fn query_collection_stats(
+    deps: Deps,
+    _env: Env,
+    nft_contract: String,
+) -> StdResult<CollectionStatsResponse> {
+    let raw_nft_contract = deps.api.addr_canonicalize(&nft_contract)?;
+    let collection_stats = COLLECTION_STATS
+        .load(deps.storage, &raw_nft_contract.as_slice())
+        .unwrap_or(CollectionStatsInfo {
+            all_time_sold: 0,
+            all_time_high: Uint128::zero(),
+            all_time_low: Uint128::zero(),
+            all_time_volume: Uint128::zero(),
+            floor_price: Uint128::zero(),
+        });
+
+    Ok(CollectionStatsResponse {
+        all_time_sold: collection_stats.all_time_sold,
+        all_time_high: collection_stats.all_time_high,
+        all_time_low: collection_stats.all_time_low,
+        all_time_volume: collection_stats.all_time_volume,
+        floor_price: collection_stats.floor_price,
+    })
+}
+
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Response> {
+pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> StdResult<Response> {
+    let mut config = CONFIG.load(deps.storage)?;
+    config.lota_contract = deps
+        .api
+        .addr_canonicalize(&msg.update_fee_collector_address)?;
+    CONFIG.save(deps.storage, &config)?;
     // let cancellation = Cancellation {
     //     cancellation_fee: Decimal::from_str("0.1").unwrap(),
     // };

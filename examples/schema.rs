@@ -4,9 +4,9 @@ use std::fs::create_dir_all;
 use cosmwasm_schema::{export_schema, remove_schemas, schema_for};
 
 use marketplace::msg::{
-    AllAuctionsResponse, AuctionResponse, BidResponse, CharityResponse, ConfigResponse, ExecuteMsg,
-    HistoryBidResponse, HistoryResponse, InstantiateMsg, MigrateMsg, QueryMsg, RoyaltyResponse,
-    StateResponse,
+    AllAuctionsResponse, AuctionResponse, BidResponse, CharityResponse, CollectionStatsResponse,
+    ConfigResponse, ExecuteMsg, HistoryBidResponse, HistoryResponse, InstantiateMsg, MigrateMsg,
+    QueryMsg, RoyaltyResponse, StateResponse,
 };
 use marketplace::state::{Config, State};
 
@@ -30,5 +30,6 @@ fn main() {
     export_schema(&schema_for!(HistoryBidResponse), &out_dir);
     export_schema(&schema_for!(HistoryResponse), &out_dir);
     export_schema(&schema_for!(RoyaltyResponse), &out_dir);
+    export_schema(&schema_for!(CollectionStatsResponse), &out_dir);
     export_schema(&schema_for!(MigrateMsg), &out_dir);
 }

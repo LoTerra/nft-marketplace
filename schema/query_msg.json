@@ -160,6 +160,7 @@
       "additionalProperties": false
     },
     {
+      "description": "Get Royalty info",
       "type": "object",
       "required": [
         "royalty"
@@ -172,6 +173,27 @@
           ],
           "properties": {
             "address": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Get NFT stats from a collection",
+      "type": "object",
+      "required": [
+        "collection_stats"
+      ],
+      "properties": {
+        "collection_stats": {
+          "type": "object",
+          "required": [
+            "nft_contract"
+          ],
+          "properties": {
+            "nft_contract": {
               "type": "string"
             }
           }

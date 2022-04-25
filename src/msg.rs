@@ -64,23 +64,13 @@ pub enum ReceiveMsg {
 #[serde(rename_all = "snake_case")]
 pub enum QueryMsg {
     /// Get auction by id
-    Auction {
-        auction_id: u64,
-    },
+    Auction { auction_id: u64 },
     /// Get bid info by auction id and address of the bidder
-    Bidder {
-        auction_id: u64,
-        address: String,
-    },
+    Bidder { auction_id: u64, address: String },
     /// Get bids history from an auction id
-    HistoryBids {
-        auction_id: u64,
-    },
+    HistoryBids { auction_id: u64 },
     /// Get bids history from an auction id
-    HistoryBidderBids {
-        auction_id: u64,
-        address: String,
-    },
+    HistoryBidderBids { auction_id: u64, address: String },
     /// Get config
     Config {},
     /// Get state
@@ -90,10 +80,10 @@ pub enum QueryMsg {
         start_after: Option<u64>,
         limit: Option<u32>,
     },
-    // Get Royalty info
-    Royalty {
-        address: String,
-    },
+    /// Get Royalty info
+    Royalty { address: String },
+    /// Get NFT stats from a collection
+    CollectionStats { nft_contract: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
@@ -181,4 +171,15 @@ pub struct RoyaltyResponse {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct MigrateMsg {}
+pub struct CollectionStatsResponse {
+    pub all_time_sold: u64,
+    pub all_time_high: Uint128,
+    pub all_time_low: Uint128,
+    pub all_time_volume: Uint128,
+    pub floor_price: Uint128,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct MigrateMsg {
+    pub update_fee_collector_address: String,
+}
