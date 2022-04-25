@@ -116,6 +116,23 @@ pub struct TalisInfo {
     pub max_supply: Option<u64>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct NFTStatsInfo {
+    pub all_time_sold: u64,
+    pub all_time_high: Uint128,
+    pub all_time_low: Uint128,
+    pub all_time_volume: Uint128,
+    pub floor_price: Uint128,
+}
+pub const NFT_STATS: Map<&[u8], NFTStatsInfo> = Map::new("nft_stats");
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct VolumeInfo {
+    pub volume: Uint128,
+}
+// (NFT address, time), vol
+pub const VOLUME: Map<(&[u8], &[u8]), VolumeInfo> = Map::new("volume");
+
 /*
   User bid stats
 */
